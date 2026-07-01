@@ -1,0 +1,3204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+<meta name="theme-color" content="#04050a" />
+<title>orbital sandbox</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;600&family=Fraunces:opsz,wght@9..144,300;9..144,600&display=swap" rel="stylesheet">
+<style>
+  /* ============================================================
+     orbital sandbox v30 — "tracking console"
+     intent-colored command deck. the bottom surface takes on the
+     hue of whatever your next canvas tap will do.
+     ============================================================ */
+  :root {
+    --void: #04050a;
+    --void-2: #070a13;
+    --deck: rgba(10, 13, 21, 0.86);
+    --deck-2: rgba(13, 17, 27, 0.94);
+    --edge: rgba(255, 255, 255, 0.085);
+    --edge-bright: rgba(255, 255, 255, 0.17);
+
+    --ink: #ece7da;
+    --ink-2: rgba(236, 231, 218, 0.60);
+    --ink-3: rgba(236, 231, 218, 0.32);
+
+    /* signal hues — one per intent */
+    --amber:  #ffb84a;   /* place / system */
+    --cyan:   #5fdfff;   /* armed scenario */
+    --violet: #c98aff;   /* pin / charge   */
+    --green:  #7cffb0;   /* circularize    */
+    --orange: #ff944a;   /* thrust         */
+    --red:    #ff6a4a;   /* delete         */
+
+    /* the live intent hue, rewritten by JS via body[data-mode] */
+    --intent: var(--amber);
+
+    --r: 13px;            /* console corner radius */
+    --r-sm: 8px;
+  }
+  body[data-mode="pin"]    { --intent: var(--violet); }
+  body[data-mode="circ"]   { --intent: var(--green); }
+  body[data-mode="thrust"] { --intent: var(--orange); }
+  body[data-mode="del"]    { --intent: var(--red); }
+
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden;
+    overscroll-behavior: none;
+    background-color: #04050a;
+    background-image: radial-gradient(140% 120% at 50% -10%, var(--void-2), var(--void) 70%);
+    color: var(--ink);
+    font-family: 'JetBrains Mono', ui-monospace, monospace;
+    -webkit-tap-highlight-color: transparent;
+  }
+  canvas { display: block; touch-action: none; cursor: crosshair; outline: none; }
+  body.armed canvas { cursor: copy; }
+  body.delete-mode canvas { cursor: not-allowed; }
+  body.pin-mode canvas { cursor: cell; }
+  body.circ-mode canvas { cursor: alias; }
+  body.thrust-mode canvas { cursor: grab; }
+
+  .grain {
+    position: fixed; inset: 0; pointer-events: none; z-index: 5;
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/><feColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.05 0'/></filter><rect width='100%25' height='100%25' filter='url(%23n)'/></svg>");
+    opacity: 0.5; mix-blend-mode: overlay;
+  }
+  /* armed: faint cyan vignette so the whole sky reads "loaded" */
+  body.armed::after {
+    content: ''; position: fixed; inset: 0; pointer-events: none; z-index: 4;
+    box-shadow: inset 0 0 120px rgba(95, 223, 255, 0.14);
+  }
+
+  button { font-family: inherit; cursor: pointer; }
+  button:focus-visible { outline: 2px solid var(--intent); outline-offset: 2px; }
+
+  /* ---------- wordmark (desktop) ---------- */
+  #wordmark {
+    position: fixed; top: 16px; left: 18px; z-index: 10;
+    pointer-events: none; user-select: none;
+  }
+  #wordmark .name {
+    font-family: 'Fraunces', serif; font-weight: 300;
+    font-size: 21px; letter-spacing: -0.01em; line-height: 1;
+    color: var(--ink);
+  }
+  #wordmark .name em { font-style: italic; color: var(--amber); }
+  #wordmark .tag {
+    font-size: 8.5px; letter-spacing: 0.32em; text-transform: uppercase;
+    color: var(--ink-3); margin-top: 5px;
+  }
+
+  /* ---------- telemetry pill (mobile top) ---------- */
+  #mobile-stats {
+    display: none;
+    position: fixed; top: calc(env(safe-area-inset-top, 0px) + 9px); left: 50%;
+    transform: translateX(-50%); z-index: 11;
+    padding: 5px 13px; border-radius: 100px;
+    background: var(--deck); border: 1px solid var(--edge);
+    backdrop-filter: blur(14px) saturate(130%);
+    -webkit-backdrop-filter: blur(14px) saturate(130%);
+    font-size: 10px; letter-spacing: 0.06em; color: var(--ink-2);
+    font-variant-numeric: tabular-nums; white-space: nowrap;
+    box-shadow: 0 6px 22px rgba(0,0,0,0.4);
+  }
+  #mobile-stats b { color: var(--ink); font-weight: 400; }
+  #mobile-stats .dot { color: var(--ink-3); margin: 0 5px; }
+
+  /* ---------- stats readout (desktop top-right) ---------- */
+  #stats {
+    position: fixed; top: 16px; right: 16px; z-index: 10;
+    padding: 12px 14px; border-radius: var(--r-sm);
+    background: var(--deck); border: 1px solid var(--edge);
+    backdrop-filter: blur(14px) saturate(120%);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+    font-size: 10px; color: var(--ink-3); letter-spacing: 0.1em;
+    min-width: 132px;
+    box-shadow: 0 16px 50px rgba(0,0,0,0.45);
+  }
+  #stats .stat { display: flex; justify-content: space-between; margin: 4px 0; text-transform: uppercase; }
+  #stats .v { color: var(--ink); font-variant-numeric: tabular-nums; letter-spacing: 0.02em; }
+
+  /* ---------- armed status pill (top center, both platforms) ---------- */
+  #status {
+    position: fixed; top: 16px; left: 50%; transform: translateX(-50%) translateY(-6px);
+    z-index: 13; padding: 7px 15px; border-radius: 100px;
+    font-size: 10px; letter-spacing: 0.14em; text-transform: uppercase;
+    color: var(--cyan); border: 1px solid var(--cyan);
+    background: rgba(95, 223, 255, 0.10);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 0 26px rgba(95,223,255,0.22);
+    opacity: 0; pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease;
+    display: flex; align-items: center; gap: 8px;
+  }
+  #status::before {
+    content: ''; width: 6px; height: 6px; border-radius: 50%;
+    background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
+    animation: blink 1.3s ease-in-out infinite;
+  }
+  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.25; } }
+  body.armed #status { opacity: 1; transform: translateX(-50%) translateY(0); }
+  #status-name { color: var(--ink); letter-spacing: 0.06em; }
+
+  /* =====================================================
+     EXPERIMENTS RAIL — scenarios as browsable cards
+     ===================================================== */
+  /* experiments rail now lives inside the console sheet (v31) */
+  .rail-head {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 4px 7px;
+  }
+  .rail-title {
+    font-size: 9px; letter-spacing: 0.3em; text-transform: uppercase;
+    color: var(--ink-3);
+  }
+  #add-mode {
+    font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    color: var(--ink-2); background: var(--deck);
+    border: 1px solid var(--edge); border-radius: 100px;
+    padding: 4px 11px; display: flex; align-items: center; gap: 6px;
+    transition: all 0.14s ease;
+  }
+  #add-mode::before {
+    content: ''; width: 6px; height: 6px; border-radius: 2px;
+    background: var(--ink-3); transition: all 0.14s ease;
+  }
+  #add-mode.active {
+    color: var(--cyan); border-color: var(--cyan);
+    background: rgba(95,223,255,0.10);
+  }
+  #add-mode.active::before { background: var(--cyan); box-shadow: 0 0 8px var(--cyan); }
+
+  .rail-scroll {
+    display: flex; gap: 8px; overflow-x: auto; padding: 2px 2px 6px;
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    scrollbar-width: none;
+    mask-image: linear-gradient(to right, transparent 0, #000 14px, #000 calc(100% - 14px), transparent 100%);
+  }
+  .rail-scroll::-webkit-scrollbar { display: none; }
+  .exp {
+    flex: 0 0 auto; scroll-snap-align: start;
+    width: 124px; text-align: left;
+    background: var(--deck); border: 1px solid var(--edge);
+    border-radius: var(--r-sm); padding: 9px 11px 10px;
+    color: var(--ink); transition: all 0.16s ease;
+    backdrop-filter: blur(14px) saturate(120%);
+    -webkit-backdrop-filter: blur(14px) saturate(120%);
+    display: flex; flex-direction: column; gap: 2px;
+  }
+  .exp:hover { border-color: var(--edge-bright); transform: translateY(-2px); }
+  .exp .sig {
+    width: 30px; height: 30px; margin-bottom: 5px; opacity: 0.85;
+    display: flex; align-items: center; justify-content: center;
+  }
+  .exp .sig svg { width: 30px; height: 30px; overflow: visible; }
+  .exp-name { font-size: 11px; letter-spacing: 0.01em; line-height: 1.15; }
+  .exp-sub { font-size: 8.5px; letter-spacing: 0.03em; color: var(--ink-3); line-height: 1.25; }
+  .exp.armed {
+    border-color: var(--cyan); background: rgba(95,223,255,0.09);
+    box-shadow: 0 0 22px rgba(95,223,255,0.18);
+  }
+  .exp.armed .sig { opacity: 1; }
+  .exp.armed .exp-sub { color: var(--cyan); }
+
+  /* =====================================================
+     COMMAND DOCK — spawn chip · mode track · pause · menu
+     this is the always-present thumb surface.
+     ===================================================== */
+  #mobile-bar {
+    position: fixed; left: 0; right: 0; z-index: 16;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 10px);
+    margin: 0 12px; padding: 7px;
+    display: flex; align-items: center; gap: 7px;
+    background: var(--deck-2); border: 1px solid var(--edge);
+    border-radius: var(--r);
+    backdrop-filter: blur(20px) saturate(135%);
+    -webkit-backdrop-filter: blur(20px) saturate(135%);
+    box-shadow:
+      0 18px 50px rgba(0,0,0,0.55),
+      inset 0 1px 0 rgba(255,255,255,0.05),
+      0 0 0 1px color-mix(in srgb, var(--intent) 26%, transparent),
+      0 -8px 40px -14px color-mix(in srgb, var(--intent) 55%, transparent);
+    transition: box-shadow 0.3s ease;
+  }
+  @media (min-width: 641px) {
+    #mobile-bar { left: 50%; right: auto; transform: translateX(-50%); margin: 0; width: min(560px, 92vw); }
+  }
+
+  /* spawn chip */
+  #mb-type {
+    flex: 0 0 auto; height: 46px; padding: 0 12px;
+    display: flex; align-items: center; gap: 8px;
+    background: transparent; border: 1px solid var(--edge);
+    border-radius: var(--r-sm); color: var(--ink);
+    font-size: 11px; letter-spacing: 0.04em; text-transform: lowercase;
+    transition: all 0.14s ease;
+  }
+  #mb-type:hover { border-color: var(--edge-bright); }
+  #mb-type .type-dot { width: 9px; height: 9px; border-radius: 50%; box-shadow: 0 0 8px currentColor; }
+  #mb-type .type-name { min-width: 46px; }
+  #mb-type .chev { color: var(--ink-3); font-size: 9px; }
+
+  /* mode track */
+  .modes {
+    flex: 1 1 auto; display: flex; gap: 3px;
+    background: rgba(0,0,0,0.28); border-radius: var(--r-sm);
+    padding: 3px; min-width: 0;
+  }
+  .seg {
+    flex: 1 1 0; min-width: 0; height: 40px;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 0; border-radius: 6px;
+    color: var(--ink-3); transition: all 0.16s ease;
+    position: relative;
+  }
+  .seg svg { width: 18px; height: 18px; stroke-width: 1.6; flex: 0 0 auto; }
+  .seg:hover { color: var(--ink-2); }
+  .seg .seg-label {
+    max-width: 0; overflow: hidden; opacity: 0; white-space: nowrap;
+    font-size: 10px; letter-spacing: 0.08em; text-transform: lowercase;
+    transition: max-width 0.2s ease, opacity 0.16s ease, margin 0.2s ease;
+  }
+  .seg.active { color: #07080c; flex: 2.6 1 0; font-weight: 600; }
+  .seg.active .seg-label { max-width: 66px; opacity: 1; margin-left: 7px; }
+  .seg-place.active { background: var(--amber); box-shadow: 0 0 16px -2px var(--amber); }
+  .seg.pin-active   { background: var(--violet); color: #07080c; box-shadow: 0 0 16px -2px var(--violet); }
+  .seg.circ-active  { background: var(--green);  color: #07080c; box-shadow: 0 0 16px -2px var(--green); }
+  .seg.thrust-active{ background: var(--orange); color: #07080c; box-shadow: 0 0 16px -2px var(--orange); }
+  .seg.danger-active{ background: var(--red);    color: #07080c; box-shadow: 0 0 16px -2px var(--red); }
+
+  /* pause + menu */
+  .dock-btn {
+    flex: 0 0 auto; width: 46px; height: 46px;
+    display: flex; align-items: center; justify-content: center;
+    background: transparent; border: 1px solid var(--edge);
+    border-radius: var(--r-sm); color: var(--ink);
+    font-size: 15px; transition: all 0.14s ease;
+  }
+  .dock-btn:hover { border-color: var(--edge-bright); }
+  .dock-btn.active { color: var(--amber); border-color: var(--amber); background: rgba(255,184,74,0.10); }
+  #mb-expand.open { color: var(--intent); border-color: var(--intent); }
+
+  /* =====================================================
+     CONSOLE SHEET — everything else, grouped, on demand
+     ===================================================== */
+  #scrim {
+    position: fixed; inset: 0; z-index: 14;
+    background: rgba(2,3,7,0.55);
+    backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+    opacity: 1; transition: opacity 0.26s ease;
+  }
+  body.collapsed #scrim { opacity: 0; pointer-events: none; }
+
+  #ui {
+    position: fixed; z-index: 15;
+    left: 0; right: 0; bottom: 0;
+    margin: 0 auto; width: 100%;
+    max-height: 82vh; overflow-y: auto;
+    -webkit-overflow-scrolling: touch;
+    padding: 8px 18px calc(env(safe-area-inset-bottom, 0px) + 84px);
+    background: var(--deck-2);
+    border-top: 1px solid var(--edge-bright);
+    border-radius: var(--r) var(--r) 0 0;
+    backdrop-filter: blur(24px) saturate(135%);
+    -webkit-backdrop-filter: blur(24px) saturate(135%);
+    box-shadow: 0 -24px 70px rgba(0,0,0,0.6);
+    transition: transform 0.3s cubic-bezier(.22,.61,.36,1), opacity 0.24s ease;
+  }
+  @media (min-width: 641px) {
+    #ui { width: min(640px, 94vw); border-radius: var(--r); bottom: 14px; }
+  }
+  body.collapsed #ui { transform: translateY(106%); opacity: 0; pointer-events: none; }
+
+  .sheet-grip {
+    width: 36px; height: 4px; border-radius: 100px;
+    background: var(--edge-bright); margin: 4px auto 12px;
+  }
+  .sheet-head {
+    display: flex; align-items: baseline; justify-content: space-between;
+    margin-bottom: 6px;
+  }
+  .sheet-head .name {
+    font-family: 'Fraunces', serif; font-weight: 300; font-style: italic;
+    font-size: 19px; color: var(--ink);
+  }
+  #collapse {
+    font-size: 9px; letter-spacing: 0.18em; text-transform: uppercase;
+    color: var(--ink-2); background: transparent;
+    border: 1px solid var(--edge); border-radius: 100px;
+    padding: 5px 13px; transition: all 0.14s ease;
+  }
+  #collapse:hover { color: var(--ink); border-color: var(--edge-bright); }
+
+  .group { margin-top: 16px; }
+  .group > .label {
+    font-size: 9px; letter-spacing: 0.26em; text-transform: uppercase;
+    color: var(--ink-3); margin: 0 0 9px;
+    display: flex; align-items: center; gap: 10px;
+  }
+  .group > .label::after { content: ''; flex: 1; height: 1px; background: var(--edge); }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* sheet buttons */
+  #ui .row > button,
+  #ui [data-type] {
+    flex: 1 1 auto; min-height: 42px; padding: 8px 12px;
+    background: transparent; color: var(--ink);
+    border: 1px solid var(--edge); border-radius: var(--r-sm);
+    font-size: 11px; letter-spacing: 0.02em;
+    transition: all 0.14s ease;
+  }
+  #ui .row > button:hover,
+  #ui [data-type]:hover { border-color: var(--edge-bright); color: #fff; }
+  #ui [data-type].active { border-color: var(--amber); color: var(--amber); background: rgba(255,184,74,0.10); }
+  #ui #merge.active, #ui #tidal.active, #ui #trails.active, #ui #orbit-lines.active, #ui #follow.active {
+    border-color: var(--amber); color: var(--amber); background: rgba(255,184,74,0.10);
+  }
+  #ui #pause.active { border-color: var(--green); color: var(--green); background: rgba(124,255,176,0.10); }
+  #ui #clear { border-color: rgba(255,106,74,0.4); color: var(--red); }
+  #ui #clear:hover { border-color: var(--red); background: rgba(255,106,74,0.10); }
+
+  .spawn-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .spawn-grid button { display: flex; flex-direction: column; align-items: center; gap: 6px; }
+  .spawn-grid .sw { width: 12px; height: 12px; border-radius: 50%; box-shadow: 0 0 9px currentColor; }
+
+  .icon-row button { flex: 0 0 auto; min-width: 46px; }
+  .speed-display {
+    align-self: center; padding: 0 4px; margin-left: auto;
+    color: var(--amber); font-size: 12px; font-variant-numeric: tabular-nums;
+  }
+
+  /* G slider */
+  .slider-row { display: flex; align-items: center; gap: 10px; padding: 4px 2px 2px; }
+  .slider-label { font-size: 10px; color: var(--ink-2); letter-spacing: 0.14em; min-width: 12px; }
+  .slider-value { font-size: 11px; color: var(--amber); font-variant-numeric: tabular-nums; min-width: 34px; text-align: right; }
+  #g-reset {
+    flex: 0 0 auto; width: 34px; height: 34px; padding: 0; font-size: 14px;
+    background: transparent; color: var(--ink-2);
+    border: 1px solid var(--edge); border-radius: var(--r-sm);
+    display: flex; align-items: center; justify-content: center;
+  }
+  #g-reset:hover { color: var(--amber); border-color: var(--amber); }
+  input[type="range"] {
+    flex: 1; height: 4px; -webkit-appearance: none; appearance: none;
+    background: var(--edge-bright); border-radius: 2px; outline: none; min-width: 0;
+  }
+  input[type="range"]::-webkit-slider-thumb {
+    -webkit-appearance: none; width: 20px; height: 20px;
+    background: var(--amber); border-radius: 50%; border: 3px solid var(--void);
+    box-shadow: 0 0 10px rgba(255,184,74,0.5);
+  }
+  input[type="range"]::-moz-range-thumb {
+    width: 20px; height: 20px; background: var(--amber);
+    border-radius: 50%; border: 3px solid var(--void);
+    box-shadow: 0 0 10px rgba(255,184,74,0.5);
+  }
+
+  .gestures {
+    font-size: 9.5px; color: var(--ink-3); line-height: 1.85;
+    letter-spacing: 0.03em; margin-top: 6px;
+  }
+  .gestures kbd {
+    color: var(--ink-2); border: 1px solid var(--edge);
+    padding: 1px 6px; border-radius: 4px; font-family: inherit; font-size: 9px;
+    margin-right: 2px;
+  }
+
+  /* hidden rack: canonical mode controls live here so keyboard
+     shortcuts + dock mirrors have real targets to click. */
+  #rack { position: fixed; left: -9999px; top: 0; width: 1px; height: 1px; overflow: hidden; }
+
+  /* ---------- body info tooltip (desktop hover) ---------- */
+  #body-tooltip {
+    position: fixed; z-index: 20;
+    background: var(--deck-2); border: 1px solid var(--edge);
+    border-radius: var(--r-sm);
+    backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+    padding: 8px 11px; font-size: 9px; letter-spacing: 0.05em;
+    color: var(--ink-2); pointer-events: none;
+    opacity: 0; transition: opacity 0.12s ease;
+    white-space: nowrap; line-height: 1.6;
+    box-shadow: 0 12px 40px rgba(0,0,0,0.5);
+  }
+  #body-tooltip.visible { opacity: 1; }
+  #body-tooltip .tt-type { text-transform: uppercase; letter-spacing: 0.16em; font-size: 8px; color: var(--ink); }
+  #body-tooltip .tt-val { color: var(--ink); font-variant-numeric: tabular-nums; }
+  #body-tooltip .tt-color { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 5px; vertical-align: middle; }
+  #body-tooltip .tt-pin { margin-left: 4px; }
+
+  /* ---------- platform visibility ---------- */
+  @media (max-width: 640px) {
+    #wordmark, #stats, #body-tooltip { display: none; }
+    #mobile-stats { display: block; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    * { animation-duration: 0.001ms !important; transition-duration: 0.001ms !important; }
+  }
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div class="grain"></div>
+
+<div id="body-tooltip"><span class="tt-color"></span><span class="tt-type"></span><span class="tt-pin"></span><br><span class="tt-mass"></span><br><span class="tt-speed"></span><br><span class="tt-orbit"></span></div>
+
+<div id="wordmark">
+  <div class="name">orbital <em>sandbox</em></div>
+  <div class="tag">n-body tracking console</div>
+</div>
+
+<div id="mobile-stats"><b id="ms-bodies">0</b> bodies<span class="dot">·</span><b id="ms-g">0.50</b> G<span class="dot">·</span><b id="ms-fps">60</b> fps</div>
+
+<div id="stats">
+  <div class="stat"><span>bodies</span><span class="v" id="s-bodies">0</span></div>
+  <div class="stat"><span>pinned</span><span class="v" id="s-pinned">0</span></div>
+  <div class="stat"><span>ejected</span><span class="v" id="s-ejected">0</span></div>
+  <div class="stat"><span>mass</span><span class="v" id="s-mass">0</span></div>
+  <div class="stat"><span>G</span><span class="v" id="s-g">0.50</span></div>
+  <div class="stat"><span>zoom</span><span class="v" id="s-zoom">1.00</span></div>
+  <div class="stat"><span>fps</span><span class="v" id="s-fps">60</span></div>
+</div>
+
+<div id="status">loaded <span id="status-name"></span> · aim &amp; release</div>
+
+<!-- experiments rail: scenarios as browsable cards -->
+<!-- command dock: spawn chip · mode track · pause · console -->
+<div id="mobile-bar">
+  <button id="mb-type" title="cycle what you place"><span class="type-dot"></span><span class="type-name">planet</span><span class="chev">▾</span></button>
+  <div class="modes" id="mode-track">
+    <button id="mb-place" class="seg seg-place active" title="place — tap to drop a body in orbit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/><circle cx="12" cy="12" r="1.6" fill="currentColor" stroke="none"/></svg><span class="seg-label">place</span>
+    </button>
+    <button id="mb-pin" class="seg" title="pin — tap a body to freeze it in space">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 3 l5 5 -5 5 -5 -5Z"/><path d="M12 13 v8"/></svg><span class="seg-label">pin</span>
+    </button>
+    <button id="mb-circ" class="seg" title="circularize — tap a body to snap it to a circular orbit">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><circle cx="12" cy="12" r="8"/></svg><span class="seg-label">circ</span>
+    </button>
+    <button id="mb-thrust" class="seg" title="thrust — drag a body to push it">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M12 20 v-14 M7 11 l5 -5 5 5"/></svg><span class="seg-label">thrust</span>
+    </button>
+    <button id="mb-delete" class="seg" title="delete — tap a body to remove it">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor"><path d="M7 7 l10 10 M17 7 l-10 10"/></svg><span class="seg-label">delete</span>
+    </button>
+  </div>
+  <button id="mb-pause" class="dock-btn" title="pause / play">⏸</button>
+  <button id="mb-expand" class="dock-btn" title="console">≡</button>
+</div>
+
+<!-- scrim behind the console sheet -->
+<div id="scrim"></div>
+
+<!-- console sheet: everything else, grouped, on demand -->
+<div id="ui">
+  <div class="sheet-grip"></div>
+  <div class="sheet-head">
+    <span class="name">console</span>
+    <button id="collapse">close</button>
+  </div>
+  <div id="ui-body">
+
+    <div class="group">
+      <div class="rail-head">
+        <span class="rail-title">experiments</span>
+        <button id="add-mode" title="when on, the next experiment drops where you aim instead of filling the field">tap to place</button>
+      </div>
+      <div class="rail-scroll" id="presets">
+    <button class="exp" data-preset="solar">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="7"/><circle cx="15" cy="15" r="11"/><circle cx="22" cy="15" r="1.6" fill="currentColor" stroke="none"/><circle cx="15" cy="4" r="1.3" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">solar system</span><span class="exp-sub">the real eight</span>
+    </button>
+    <button class="exp" data-preset="tatooine">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="11"/><circle cx="11" cy="14" r="2.6" fill="currentColor" stroke="none"/><circle cx="19" cy="14" r="2.2" fill="currentColor" stroke="none"/><circle cx="4" cy="15" r="1.6" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">tatooine</span><span class="exp-sub">circumbinary, two suns</span>
+    </button>
+    <button class="exp" data-preset="three">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><path d="M15 15 C6 6 6 24 15 15 C24 6 24 24 15 15Z"/><circle cx="7" cy="15" r="1.6" fill="currentColor" stroke="none"/><circle cx="23" cy="15" r="1.6" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="1.6" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">figure-8</span><span class="exp-sub">three bodies, one path</span>
+    </button>
+    <button class="exp" data-preset="trojans">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="11"/><circle cx="15" cy="15" r="2.6" fill="currentColor" stroke="none"/><circle cx="24" cy="9" r="1.4" fill="currentColor" stroke="none"/><circle cx="24" cy="21" r="1.4" fill="currentColor" stroke="none"/><circle cx="22" cy="6" r="1" fill="currentColor" stroke="none" opacity="0.6"/><circle cx="22" cy="24" r="1" fill="currentColor" stroke="none" opacity="0.6"/></svg></span>
+      <span class="exp-name">trojans</span><span class="exp-sub">locked at L4 / L5</span>
+    </button>
+    <button class="exp" data-preset="moons">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="4.5" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="8.5"/><circle cx="23.5" cy="15" r="1.5" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="11.5" opacity="0.5"/><circle cx="15" cy="3.5" r="1.2" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">moon system</span><span class="exp-sub">nested satellites</span>
+    </button>
+    <button class="exp" data-preset="kirkwood">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="2.2" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="8" stroke-dasharray="10 6" opacity="0.5"/><circle cx="15" cy="15" r="10.5" stroke-dasharray="12 7" opacity="0.4"/><circle cx="15" cy="2.5" r="1.5" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">kirkwood belt</span><span class="exp-sub">resonance gaps, Jupiter</span>
+    </button>
+    <button class="exp" data-preset="dust">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="3" fill="currentColor" stroke="none"/><circle cx="6" cy="11" r="1" fill="currentColor" stroke="none"/><circle cx="24" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="22" r="1" fill="currentColor" stroke="none"/><circle cx="22" cy="21" r="1" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="5" cy="18" r="1" fill="currentColor" stroke="none"/><circle cx="26" cy="19" r="1" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">dust cloud</span><span class="exp-sub">a disk, accreting</span>
+    </button>
+    <button class="exp" data-preset="lagrange">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="11" opacity="0.5"/><path d="M9 15 l3 -3 l3 3 l-3 3Z" fill="currentColor" stroke="none"/><path d="M21 15 l3 -3 l3 3 l-3 3Z" fill="currentColor" stroke="none" transform="translate(-6,0)"/></svg></span>
+      <span class="exp-name">fixed pair</span><span class="exp-sub">pinned · slingshot range</span>
+    </button>
+    <button class="exp" data-preset="trisolaris">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><path d="M15 8 C8 13 22 14 10 19 C16 24 15 13 20 19 C24 12 11 11 15 8Z" opacity="0.4"/><circle cx="15" cy="8" r="2.5" fill="currentColor" stroke="none"/><circle cx="9" cy="19" r="2.5" fill="currentColor" stroke="none"/><circle cx="21" cy="19" r="2.5" fill="currentColor" stroke="none"/><circle cx="27" cy="5" r="1" fill="currentColor" stroke="none" opacity="0.85"/></svg></span>
+      <span class="exp-name">trisolaris</span><span class="exp-sub">three suns, chaos</span>
+    </button>
+    <button class="exp" data-preset="rogue">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="13" cy="15" r="2.6" fill="currentColor" stroke="none"/><circle cx="13" cy="15" r="7" opacity="0.5"/><circle cx="13" cy="15" r="11" opacity="0.3"/><circle cx="26" cy="6" r="2" fill="currentColor" stroke="none"/><path d="M26 6 L19 11" stroke-dasharray="1.5 2" opacity="0.5"/></svg></span>
+      <span class="exp-name">rogue star</span><span class="exp-sub">flyby, raking orbits</span>
+    </button>
+    <button class="exp" data-preset="triple">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="12" cy="15" r="2" fill="currentColor" stroke="none"/><circle cx="18" cy="15" r="1.8" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="4.5" opacity="0.4"/><circle cx="15" cy="15" r="11"/><circle cx="15" cy="4" r="1.6" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">triple</span><span class="exp-sub">inner pair, outer third</span>
+    </button>
+    <button class="exp" data-preset="empty">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="10" stroke-dasharray="2 3" opacity="0.6"/><path d="M15 12 v6 M12 15 h6" opacity="0.8"/></svg></span>
+      <span class="exp-name">empty void</span><span class="exp-sub">start from zero</span>
+    </button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">physics</div>
+      <div class="row">
+        <button id="merge" class="active">merge on</button>
+        <button id="tidal" class="active">tidal on</button>
+      </div>
+      <div class="slider-row">
+        <span class="slider-label">G</span>
+        <input type="range" id="g-slider" min="-1.3" max="0.7" step="0.01" value="-0.3" />
+        <span class="slider-value" id="g-value">0.50</span>
+        <button id="g-reset" title="reset gravity">↺</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">time</div>
+      <div class="row icon-row">
+        <button id="pause">pause</button>
+        <button id="slower">«</button>
+        <button id="faster">»</button>
+        <span class="speed-display" id="speed">1.0x</span>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">view</div>
+      <div class="row">
+        <button id="trails" class="active">trails</button>
+        <button id="orbit-lines">orbits</button>
+        <button id="follow">follow biggest</button>
+        <button id="recenter">recenter</button>
+        <button id="zoomfit">zoom to fit</button>
+        <button id="clear">clear field</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">state</div>
+      <div class="row">
+        <button id="save-state">save</button>
+        <button id="load-state">load</button>
+      </div>
+    </div>
+
+    <div class="group">
+      <div class="label">gestures</div>
+      <div class="gestures">
+        <kbd>tap</kbd> place in orbit &nbsp; <kbd>pull back</kbd> slingshot &nbsp; <kbd>hold</kbd> charge mass &nbsp; <kbd>drag</kbd> pan &nbsp; <kbd>scroll / pinch</kbd> zoom<br>
+        the dock track sets what a tap does: <kbd>place</kbd> <kbd>pin</kbd> <kbd>circularize</kbd> <kbd>thrust</kbd> <kbd>delete</kbd> — the deck glows in that color<br>
+        keys: <kbd>space</kbd> pause <kbd>d</kbd> delete <kbd>p</kbd> pin <kbd>c</kbd> circ <kbd>h</kbd> thrust <kbd>v</kbd>/<kbd>o</kbd> orbits <kbd>t</kbd> trails <kbd>f</kbd> follow <kbd>r</kbd> recenter <kbd>z</kbd> fit <kbd>s</kbd> save <kbd>l</kbd> load
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<!-- hidden rack: canonical mode controls. keyboard shortcuts and the
+     dock mode track click these; they hold the real state + mutex logic. -->
+<div id="rack" aria-hidden="true">
+  <button id="pin-mode">pin</button>
+  <button id="circularize-mode">circularize</button>
+  <button id="thrust-mode">thrust</button>
+  <button id="delete-mode">delete</button>
+</div>
+
+<script>
+'use strict';
+
+// -------- physics constants --------
+let G = 0.5;                // v17: mutable - controlled by slider
+const G_DEFAULT = 0.5;
+const SOFT = 6;
+const STEP_DT = 0.5;
+const MIN_DRAG = 20;
+const PLUNGER_RAMP = 100;
+const CULL_RADIUS = 5000;   // v17: auto-cull escapees past this COM-frame distance
+const ROCHE_MASS_RATIO = 20; // v18: minimum mass ratio for tidal disruption
+const ROCHE_MIN_MASS = 0.5;  // v18: minimum mass to shatter (prevents infinite cascade)
+const SHATTER_COOLDOWN = 120; // v18: frames of immunity after being created by shatter
+
+let timeScale = 1.0;
+let paused = false;
+let trailsOn = true;
+let followBiggest = false;
+let mergeOn = true;
+let tidalOn = true;           // v18: Roche shattering toggle
+let addMode = false;
+let armedScenario = null;
+let currentType = 'planet';
+let deleteMode = false;
+let pinMode = false;
+let circularizeMode = false;
+let showOrbitLines = false;     // v27: osculating-ellipse overlay (replaced velocity arrows)
+let ejections = 0;              // v17: escapee counter
+let thrustMode = false;         // v24: thrust mode
+let thrustTarget = null;        // v24: body being thrusted
+let thrustScreenPos = null;     // v24: current mouse/touch position during thrust
+
+// v17: stored accelerations for velocity Verlet (leapfrog KDK)
+let storedAx = null, storedAy = null;
+
+// -------- canvas --------
+const canvas = document.getElementById('c');
+const ctx = canvas.getContext('2d');
+let W, H, DPR;
+
+function resize() {
+  DPR = Math.min(window.devicePixelRatio || 1, 2);
+  W = window.innerWidth; H = window.innerHeight;
+  canvas.width = W * DPR; canvas.height = H * DPR;
+  canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
+  ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+}
+resize();
+window.addEventListener('resize', resize);
+
+// v30: console sheet starts closed everywhere — canvas-first
+document.body.classList.add('collapsed');
+
+// -------- camera --------
+let cam = { x: 0, y: 0, zoom: 1 };
+function worldToScreen(x, y) {
+  return [(x - cam.x) * cam.zoom + W / 2, (y - cam.y) * cam.zoom + H / 2];
+}
+function screenToWorld(sx, sy) {
+  return [(sx - W / 2) / cam.zoom + cam.x, (sy - H / 2) / cam.zoom + cam.y];
+}
+
+// -------- body archetypes --------
+const TYPES = {
+  asteroid:  { mass: 1,    radius: 2,  color: '#a89a85', glow: 0,  ring: false },
+  planet:    { mass: 50,   radius: 6,  color: '#5fa6ff', glow: 6,  ring: false },
+  star:      { mass: 2200, radius: 14, color: '#ffd24a', glow: 38, ring: false },
+  blackhole: { mass: 9000, radius: 9,  color: '#000',    glow: 0,  ring: true  }
+};
+
+const PLANET_PALETTE = [
+  '#5fa6ff', '#ff7a59', '#7cffb0', '#c98aff',
+  '#ffb84a', '#5fe1ff', '#ff5f8a', '#dec78c'
+];
+function planetColor() { return PLANET_PALETTE[Math.floor(Math.random() * PLANET_PALETTE.length)]; }
+
+let bodies = [];
+let nextId = 0;
+
+function makeBody(x, y, vx, vy, type, overrides = {}) {
+  const t = TYPES[type];
+  return {
+    id: nextId++,
+    x, y, vx, vy,
+    mass: overrides.mass ?? t.mass,
+    radius: overrides.radius ?? t.radius,
+    color: overrides.color ?? (type === 'planet' ? planetColor() : t.color),
+    glow: overrides.glow ?? t.glow,
+    ring: overrides.ring ?? t.ring,
+    fixed: overrides.fixed ?? false,
+    name: overrides.name ?? null,              // v25: named bodies
+    saturnRing: overrides.saturnRing ?? false, // v25: tilted ring visual
+    shatterAge: overrides.shatterAge ?? Infinity, // v18: frames since shatter-created (Infinity = normal body)
+    type,
+    trail: []
+  };
+}
+
+// -------- v10: merge flash effects --------
+let flashes = [];
+
+function addFlash(x, y, radius, color) {
+  flashes.push({
+    x, y,
+    radius: Math.max(8, radius * 2),
+    color,
+    born: performance.now(),
+    life: 400 // ms
+  });
+}
+
+// -------- v10: deletion pop effects --------
+let pops = [];
+
+function addPop(x, y, color) {
+  pops.push({
+    x, y, color,
+    born: performance.now(),
+    life: 300
+  });
+}
+
+// -------- v18: shatter burst effect --------
+let shatters = [];
+
+function addShatter(x, y, radius, color, angle) {
+  shatters.push({
+    x, y, radius: Math.max(10, radius * 3),
+    color, angle, // angle = tidal axis direction
+    born: performance.now(),
+    life: 500
+  });
+}
+
+// -------- presets --------
+function spawnPreset(name, ox, oy, vox = 0, voy = 0) {
+  if (name === 'solar') {
+    // v25: the real solar system - 8 named planets at real eccentricities,
+    // compressed radii. validated headless (physics_notes v9): 6 seeds x 90s,
+    // 0 escapes, max |da/a| < 2%. adjacent giants > 3.5 mutual Hill radii
+    // (a first draft at 620/780 with m=4 each sat at 2.6 - the v12 moons bug).
+    const sunM = 4000;
+    const planets = [
+      { name: 'mercury', a: 80,  e: 0.206, mass: 0.8, radius: 2.6, color: '#b5a99a' },
+      { name: 'venus',   a: 115, e: 0.007, mass: 1.5, radius: 3.8, color: '#e8c89a' },
+      { name: 'earth',   a: 160, e: 0.017, mass: 1.5, radius: 4.0, color: '#5fa6ff' },
+      { name: 'mars',    a: 215, e: 0.093, mass: 1.0, radius: 3.0, color: '#ff7a59' },
+      { name: 'jupiter', a: 330, e: 0.049, mass: 6.0, radius: 9.0, color: '#d9b38c' },
+      { name: 'saturn',  a: 470, e: 0.056, mass: 4.0, radius: 7.5, color: '#e8d8a8', saturnRing: true },
+      { name: 'uranus',  a: 650, e: 0.046, mass: 3.0, radius: 5.5, color: '#9fe8ff' },
+      { name: 'neptune', a: 880, e: 0.009, mass: 3.0, radius: 5.5, color: '#6a7aff' }
+    ];
+    // each planet starts at its own periapsis, random orientation.
+    // COM correction: sun absorbs net planet momentum so the system doesn't slide.
+    let netPx = 0, netPy = 0;
+    const inits = planets.map(p => {
+      const mu = G * (sunM + p.mass);
+      const ang = Math.random() * Math.PI * 2;
+      const rp = p.a * (1 - p.e);
+      const vp = Math.sqrt(mu * (1 + p.e) / rp);
+      const pvx = -Math.sin(ang) * vp, pvy = Math.cos(ang) * vp;
+      netPx += p.mass * pvx; netPy += p.mass * pvy;
+      return { x: Math.cos(ang) * rp, y: Math.sin(ang) * rp, vx: pvx, vy: pvy };
+    });
+    bodies.push(makeBody(ox, oy, vox - netPx / sunM, voy - netPy / sunM, 'star',
+      { mass: sunM, radius: 16, name: 'sol' }));
+    planets.forEach((p, i) => {
+      bodies.push(makeBody(
+        ox + inits[i].x, oy + inits[i].y,
+        vox + inits[i].vx, voy + inits[i].vy,
+        'planet', { color: p.color, radius: p.radius, mass: p.mass,
+                    name: p.name, saturnRing: !!p.saturnRing }
+      ));
+    });
+  } else if (name === 'tatooine') {
+    // v33: Tatooine - circumbinary planet orbiting outside a tight binary pair.
+    // two suns, one world, the double-sunset experience. replaces the old binary
+    // scenario (which was this plus clutter).
+    // Holman-Wiegert: stable circumbinary orbit needs r > 2.4× total binary
+    // separation. sep=80 → total sep = 160, planet at r=420 → 2.625× ✓
+    const sep = 80, m = 1500;
+    const v = Math.sqrt(G * m / (4 * sep));
+    // one circumbinary world - proper two-body velocity (planet mass ~1.3% of
+    // total stellar mass, above the 1% threshold in the notes)
+    const Mstars = 2 * m;
+    const pMass = 40, pr = 420;
+    const pa = Math.random() * Math.PI * 2;
+    const pv = Math.sqrt(G * Mstars * Mstars / ((Mstars + pMass) * pr));
+    const pvx = -Math.sin(pa) * pv, pvy = Math.cos(pa) * pv;
+    // COM correction: stars absorb planet momentum (equal split)
+    const dvx = -pMass * pvx / Mstars;
+    const dvy = -pMass * pvy / Mstars;
+    bodies.push(makeBody(ox - sep, oy, vox + dvx, voy - v + dvy, 'star', { mass: m }));
+    bodies.push(makeBody(ox + sep, oy, vox + dvx, voy + v + dvy, 'star', { mass: m, color: '#ff8a4a' }));
+    bodies.push(makeBody(
+      ox + Math.cos(pa) * pr, oy + Math.sin(pa) * pr,
+      vox + pvx, voy + pvy,
+      'planet', { mass: pMass, radius: 6, color: '#d9b07a', name: 'tatooine' }
+    ));
+  } else if (name === 'three') {
+    // figure-8 choreography (Chenciner & Montgomery, 1993)
+    // genuinely periodic, stable 3-body solution. all three masses chase
+    // each other along a single figure-8 curve forever.
+    // canonical initial conditions are dimensionless (G=1, m=1); we scale
+    // them to our units via L (length) and m (mass).
+    // mass=1400 keeps trails on (mass<1500 threshold)
+    const L = 120, m = 1400;
+    const V = Math.sqrt(G * m / L);
+    const rx = 0.97000436, ry = -0.24308753;
+    const vx = 0.46620368, vy = 0.43236573;
+    bodies.push(makeBody(
+      ox + L * rx, oy + L * ry,
+      vox + V * vx, voy + V * vy,
+      'star', { mass: m, color: '#ffd24a', radius: 9 }
+    ));
+    bodies.push(makeBody(
+      ox - L * rx, oy - L * ry,
+      vox + V * vx, voy + V * vy,
+      'star', { mass: m, color: '#ff7a4a', radius: 9 }
+    ));
+    bodies.push(makeBody(
+      ox, oy,
+      vox - 2 * V * vx, voy - 2 * V * vy,
+      'star', { mass: m, color: '#5fdfff', radius: 9 }
+    ));
+  } else if (name === 'kirkwood') {
+    // v36: Kirkwood belt - asteroid belt with gaps at mean-motion resonances.
+    // replaces ringed giant. the belt is pre-carved: gaps at 3:1 and 2:1
+    // resonance radii are placed at initialization (real gap formation takes
+    // millions of orbits, far beyond sandbox timescales). Jupiter is light
+    // enough (m=80, 2.7% of star) to keep the belt stable but heavy enough
+    // to visibly influence outer-belt asteroids over time.
+    // the teaching moment: arm the scenario and launch a test particle into
+    // a gap - watch it scatter. launch one into the stable zones - it orbits
+    // peacefully. that's the resonance lesson.
+    const starM = 3000, jupM = 80, jupR = 550;
+    // resonance radii (Kepler T^2 ∝ r^3): r_res = r_J * (p/q)^(2/3)
+    const gap31 = jupR * Math.pow(1/3, 2/3);  // ~264
+    const gap21 = jupR * Math.pow(1/2, 2/3);  // ~346
+    const gapHalf = 10;  // half-width of each gap
+    const inGap = r =>
+      (r > gap31 - gapHalf && r < gap31 + gapHalf) ||
+      (r > gap21 - gapHalf && r < gap21 + gapHalf);
+    // Jupiter - proper two-body velocity, COM-corrected
+    const jv = Math.sqrt(G * starM * starM / ((starM + jupM) * jupR));
+    bodies.push(makeBody(ox, oy, vox, voy - jupM * jv / starM, 'star',
+      { mass: starM, radius: 14 }));
+    bodies.push(makeBody(
+      ox + jupR, oy, vox, voy + jv,
+      'planet', { mass: jupM, radius: 7, color: '#e8a54a', name: 'jupiter' }
+    ));
+    // asteroid belt: r=180-380, skip gap zones
+    let placed = 0;
+    while (placed < 120) {
+      const r = 180 + Math.random() * 200;
+      if (inGap(r)) continue;
+      const a = Math.random() * Math.PI * 2;
+      const v = Math.sqrt(G * starM / r);
+      bodies.push(makeBody(
+        ox + Math.cos(a) * r, oy + Math.sin(a) * r,
+        vox - Math.sin(a) * v, voy + Math.cos(a) * v,
+        'asteroid', { mass: 0.15, radius: 1.2 + Math.random() * 0.6 }
+      ));
+      placed++;
+    }
+  } else if (name === 'dust') {
+    // v26 rebuild: the old disk was circular orbits + 0.015 jitter -
+    // relative speeds never reached the 0.8 merge gate, so "accretion"
+    // never happened and it was just a dimmer ringed giant. now it's a
+    // hot disk: heavier core (v scales with sqrt(M)) + +-17.5% speed
+    // spread + radial kicks = crossing orbits that collide above the
+    // gate. validated: ~35 merges per 90s, steady timeline, grains grow
+    // 3-5x. watch planetesimals form.
+    const core = makeBody(ox, oy, vox, voy, 'star', {
+      mass: 2000, radius: 8, color: '#a08060', glow: 12
+    });
+    bodies.push(core);
+    const count = 200;
+    for (let i = 0; i < count; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const u = Math.random();
+      const r = 50 + 250 * (1 - (1 - u) * (1 - u));
+      const vc = Math.sqrt(G * core.mass / r);
+      const v = vc * (0.825 + Math.random() * 0.35);     // eccentricity via speed spread
+      const vr = vc * (Math.random() - 0.5) * 0.25;      // radial kick
+      bodies.push(makeBody(
+        ox + Math.cos(a) * r, oy + Math.sin(a) * r,
+        vox - Math.sin(a) * v + Math.cos(a) * vr,
+        voy + Math.cos(a) * v + Math.sin(a) * vr,
+        'asteroid', { mass: 0.05 + Math.random() * 0.3, radius: 1 + Math.random() * 1.2 }
+      ));
+    }
+  } else if (name === 'trojans') {
+    // v16: sun + planet + L4/L5 trojan asteroid swarms.
+    //
+    // three fixes over v15 (which scattered within one orbit):
+    //   1) COM correction - sun and planet both orbit the barycenter,
+    //      so the system doesn't drift and the rotating frame stays clean
+    //   2) wider orbit R=500 (was 260) - fewer orbits per wall-minute
+    //      means the integrator's per-orbit energy drift has less time
+    //      to accumulate before the user loses interest
+    //   3) tighter initial spread ±4.6° / ±3 units (was ±10° / ±5) -
+    //      smaller libration amplitude = less energy for the integrator
+    //      to pump into the trojan orbits
+    //
+    // µ = 35 / 2535 = 0.0138, well under the Routh limit of 0.0385.
+    // co-rotation: all velocities are tangential to orbits around the
+    // system COM at the two-body angular velocity ω = sqrt(G*Mtotal/R³).
+    //
+    // tested: 0/200 unstable at 60s/1x, 8/200 at 90s/1x, 6/200 at
+    // 60s/1.5x. degrades past ~3x as expected from integrator drift.
+    const sunM = 2500, planetM = 35;
+    const Mtotal = sunM + planetM;
+    const R = 500;   // sun-planet separation
+    const omega = Math.sqrt(G * Mtotal / (R * R * R));
+    const planetA = 0;
+
+    // COM-relative distances (sun and planet on opposite sides)
+    const dSun = R * planetM / Mtotal;      // ~6.9
+    const dPlanet = R * sunM / Mtotal;      // ~493.1
+    const sunA = planetA + Math.PI;
+
+    // sun: orbits COM on the far side from the planet
+    const sx = ox + dSun * Math.cos(sunA);
+    const sy = oy + dSun * Math.sin(sunA);
+    const svx = vox - omega * dSun * Math.sin(sunA);
+    const svy = voy + omega * dSun * Math.cos(sunA);
+    bodies.push(makeBody(sx, sy, svx, svy, 'star', { mass: sunM }));
+
+    // planet
+    const px = ox + dPlanet * Math.cos(planetA);
+    const py = oy + dPlanet * Math.sin(planetA);
+    const pvx = vox - omega * dPlanet * Math.sin(planetA);
+    const pvy = voy + omega * dPlanet * Math.cos(planetA);
+    bodies.push(makeBody(px, py, pvx, pvy, 'planet',
+      { mass: planetM, radius: 8, color: '#dec78c' }));
+
+    // L4 (60° leading) and L5 (60° trailing) swarms
+    // positions are relative to the sun (equilateral triangle vertices),
+    // velocities are tangential to orbits around the COM
+    const swarms = [
+      { offset:  Math.PI / 3, color: '#5fa6ff' },
+      { offset: -Math.PI / 3, color: '#ff7a59' }
+    ];
+    for (const s of swarms) {
+      for (let i = 0; i < 12; i++) {
+        const angJitter = (Math.random() - 0.5) * 0.08;  // ±2.3°
+        const radJitter = (Math.random() - 0.5) * 6;     // ±3 units
+        const a = planetA + s.offset + angJitter;
+        const r = R + radJitter;
+        // position relative to the sun
+        const tx = sx + r * Math.cos(a);
+        const ty = sy + r * Math.sin(a);
+        // velocity tangential to orbit around COM (ox, oy)
+        const dxCom = tx - ox, dyCom = ty - oy;
+        const rCom = Math.sqrt(dxCom * dxCom + dyCom * dyCom);
+        const aCom = Math.atan2(dyCom, dxCom);
+        const va = omega * rCom;
+        bodies.push(makeBody(
+          tx, ty,
+          vox - va * Math.sin(aCom), voy + va * Math.cos(aCom),
+          'asteroid', { mass: 0.3, color: s.color }
+        ));
+      }
+    }
+  } else if (name === 'moons') {
+    // hierarchical: star + two planets, each with moons.
+    // tuned for stability against three subtle problems:
+    //   1) mutual hill instability between adjacent moons - moons
+    //      need at least 3.46 mutual hill radii separation
+    //   2) sun's tidal pull on inner-planet moon - inner planet sits
+    //      at R=220 (not closer) so tidal/grip ratio stays low
+    //   3) COM drift from heavy planets orbiting a "fixed" sun -
+    //      sun's velocity is set to cancel net planet momentum so
+    //      the whole system doesn't slide across space over time
+    const sunM = 2500;
+    const M1 = 300, R1 = 220, m1d = 22, m1M = 0.3;
+    const M2 = 300, R2 = 520;
+    const moonSpecs = [
+      { d: 24, mass: 0.3, color: '#7cffb0' },
+      { d: 40, mass: 0.3, color: '#c98aff' },
+      { d: 56, mass: 0.3, color: '#ff7a59' }
+    ];
+    const a1 = 0.4, a2 = Math.PI + 0.3;
+    // proper two-body circular velocity: v = sqrt(G*M_sun^2 / (M_total*R))
+    // (reduces to sqrt(G*M_sun/R) when M_planet << M_sun)
+    const moonsTotal2 = moonSpecs.reduce((s, m) => s + m.mass, 0);
+    const Mt1 = sunM + M1 + m1M;
+    const Mt2 = sunM + M2 + moonsTotal2;
+    const v1 = Math.sqrt(G * sunM * sunM / (Mt1 * R1));
+    const v2 = Math.sqrt(G * sunM * sunM / (Mt2 * R2));
+    const p1vx = -v1 * Math.sin(a1), p1vy = v1 * Math.cos(a1);
+    const p2vx = -v2 * Math.sin(a2), p2vy = v2 * Math.cos(a2);
+    // sun velocity that cancels planet momentum (keeps COM at rest)
+    const sunDvx = -(M1 * p1vx + M2 * p2vx) / sunM;
+    const sunDvy = -(M1 * p1vy + M2 * p2vy) / sunM;
+
+    bodies.push(makeBody(ox, oy, vox + sunDvx, voy + sunDvy, 'star', { mass: sunM }));
+
+    // ---- inner rocky planet with one moon ----
+    // R_hill = R1 * cbrt(M1/(3*sunM)) ≈ 50, moon at d=22 is 44% of hill
+    const p1x = ox + R1 * Math.cos(a1);
+    const p1y = oy + R1 * Math.sin(a1);
+    const P1vx = vox + p1vx, P1vy = voy + p1vy;
+    bodies.push(makeBody(p1x, p1y, P1vx, P1vy, 'planet',
+      { mass: M1, radius: 6, color: '#5fa6ff' }));
+    const ima = Math.random() * Math.PI * 2;
+    const m1v = Math.sqrt(G * M1 / m1d);
+    bodies.push(makeBody(
+      p1x + m1d * Math.cos(ima), p1y + m1d * Math.sin(ima),
+      P1vx - m1v * Math.sin(ima), P1vy + m1v * Math.cos(ima),
+      'asteroid', { mass: m1M, radius: 2, color: '#a89a85' }
+    ));
+
+    // ---- outer gas giant with three moons ----
+    // R_hill ≈ 178, outermost moon at d=56 is 31% of hill
+    const p2x = ox + R2 * Math.cos(a2);
+    const p2y = oy + R2 * Math.sin(a2);
+    const P2vx = vox + p2vx, P2vy = voy + p2vy;
+    bodies.push(makeBody(p2x, p2y, P2vx, P2vy, 'planet',
+      { mass: M2, radius: 11, color: '#dec78c' }));
+    for (const mn of moonSpecs) {
+      const ma = Math.random() * Math.PI * 2;
+      const mv = Math.sqrt(G * M2 / mn.d);
+      bodies.push(makeBody(
+        p2x + mn.d * Math.cos(ma), p2y + mn.d * Math.sin(ma),
+        P2vx - mv * Math.sin(ma), P2vy + mv * Math.cos(ma),
+        'asteroid', { mass: mn.mass, radius: 2, color: mn.color }
+      ));
+    }
+  } else if (name === 'trisolaris') {
+    // v31: the chaotic three-body of Liu Cixin's novel - three suns and a
+    // single world that endures Stable Eras and Chaotic Eras until it doesn't.
+    // NOT the figure-8 (that one is the rare periodic solution). this is the
+    // generic case: three near-equal suns from a gently-rotating equilateral
+    // triangle that decays into chaos, trading tight embraces and long lonely
+    // arcs, while the planet gets flung from scorching-close to frozen-far.
+    // chaotic by design - no stability target (like the old galaxy slot).
+    // headless-validated (physics_notes v16): rad=5 keeps the merge cross-
+    // section small so the trisolar dance survives the full 200s in ~6/8
+    // seeds; planet swings 5u (grazing a sun) to 5300u (near the cull edge);
+    // 2/8 seeds end in a sun-merge catastrophe, 2/8 eject the planet - every
+    // load is a different fate, which is the whole point.
+    const m = 650;           // base sun mass; trails on (mass < 1500)
+    const s = 380;           // equilateral side
+    const spin = 0.96;       // fraction of rigid-rotation speed (sub-rigid -> chaos)
+    const asym = 0.04;       // mass spread across the three suns
+    const eps = 0.04;        // small position perturbation to seed chaos
+    const R = s / Math.sqrt(3);          // each sun's distance from the centroid
+    const vc = Math.sqrt(G * m / s);     // rigid-rotation tangential speed
+    // three suns, distinct stellar colors (hot blue-white / yellow / red) so
+    // radius-5 bodies still read as suns via their glow
+    const sunColors = ['#bcd8ff', '#ffd24a', '#ff6a4a'];
+    const masses = [m * (1 - asym), m, m * (1 + asym)];
+    for (let k = 0; k < 3; k++) {
+      const ang = k * 2 * Math.PI / 3 + (Math.random() - 0.5) * eps;
+      const rr = R * (1 + (Math.random() - 0.5) * eps);
+      bodies.push(makeBody(
+        ox + Math.cos(ang) * rr, oy + Math.sin(ang) * rr,
+        vox - Math.sin(ang) * vc * spin, voy + Math.cos(ang) * vc * spin,
+        'star', { mass: masses[k], radius: 5, color: sunColors[k], glow: 34 }
+      ));
+    }
+    // the world: a solid planet (mass 50) on a wide near-circular orbit
+    // around the whole triple (its opening "Stable Era"). mass 50 keeps it
+    // BELOW the Roche shatter ratio against a single sun (650/50 = 13 < 20),
+    // so a scorching close pass sears it instead of vaporizing it - the world
+    // endures the eras rather than detonating on first approach (v31 bug).
+    const Mtot = masses[0] + masses[1] + masses[2];
+    const pr = 680;
+    const pa = Math.random() * Math.PI * 2;
+    const pv = Math.sqrt(G * Mtot / pr);
+    bodies.push(makeBody(
+      ox + Math.cos(pa) * pr, oy + Math.sin(pa) * pr,
+      vox - Math.sin(pa) * pv, voy + Math.cos(pa) * pv,
+      'planet', { mass: 50, radius: 6, color: '#9fb6c9' }
+    ));
+    // COM-correct: zero net momentum + recenter on the spawn point so the
+    // system doesn't drift off-frame (and so escape detection stays honest)
+    let px = 0, py = 0, cx = 0, cy = 0, M = 0;
+    for (const b of bodies) { px += b.vx * b.mass; py += b.vy * b.mass; cx += b.x * b.mass; cy += b.y * b.mass; M += b.mass; }
+    px /= M; py /= M; cx /= M; cy /= M;
+    for (const b of bodies) { b.vx -= px - vox; b.vy -= py - voy; b.x -= cx - ox; b.y -= cy - oy; }
+
+  } else if (name === 'rogue') {
+    // v34: Rogue star - a settled system disrupted by a fast interloper.
+    // the clean version of what galaxy was reaching for: a rival star punches
+    // through and rakes the planetary orbits. drama from a flyby, no mush.
+    // the interloper is on a hyperbolic trajectory (v > v_esc at starting
+    // distance) so it's a genuine flyby. every load is different: the random
+    // impact parameter (180-400u) and planet positions determine whether
+    // you get gentle perturbation or total annihilation. Roche shattering
+    // creates debris when planets get too close to the interloper.
+    // validated headless (12 seeds × 200s, Roche on): sun always survives,
+    // rogue always exits, 0-4 planets disrupted. planets alive 0-3 per seed.
+    const sunM = 3000;
+    const planetDefs = [
+      { r: 130, mass: 8,  radius: 3,  color: '#b5a99a' },  // inner rocky
+      { r: 230, mass: 25, radius: 5,  color: '#5fa6ff' },  // middle world
+      { r: 370, mass: 40, radius: 7,  color: '#dec78c' },  // outer giant
+      { r: 540, mass: 12, radius: 4,  color: '#9fe8ff' },  // far ice world
+    ];
+    // settled system with COM correction
+    let netPx = 0, netPy = 0;
+    const inits = planetDefs.map(p => {
+      const ang = Math.random() * Math.PI * 2;
+      const v = Math.sqrt(G * (sunM + p.mass) / p.r);
+      const pvx = -Math.sin(ang) * v, pvy = Math.cos(ang) * v;
+      netPx += p.mass * pvx; netPy += p.mass * pvy;
+      return { x: Math.cos(ang) * p.r, y: Math.sin(ang) * p.r, vx: pvx, vy: pvy };
+    });
+    bodies.push(makeBody(ox, oy, vox - netPx / sunM, voy - netPy / sunM, 'star',
+      { mass: sunM, radius: 14 }));
+    planetDefs.forEach((p, i) => {
+      bodies.push(makeBody(
+        ox + inits[i].x, oy + inits[i].y,
+        vox + inits[i].vx, voy + inits[i].vy,
+        'planet', { mass: p.mass, radius: p.radius, color: p.color }
+      ));
+    });
+    // the interloper: a smaller star on a hyperbolic trajectory approaching
+    // from the left. impact parameter randomized so some loads are gentle
+    // rakes, others are devastating close passes.
+    const impact = 180 + Math.random() * 220;
+    bodies.push(makeBody(
+      ox - 900, oy + impact,
+      vox + 2.2, voy,
+      'star', { mass: 1200, radius: 11, color: '#ff4a3a', glow: 28 }
+    ));
+
+  } else if (name === 'triple') {
+    // v35: Hierarchical triple - tight inner binary + distant outer third.
+    // the stable three-body config (~80% of real triple stars). the inner
+    // pair spins fast, the outer third sweeps slowly. hypnotic clockwork.
+    // outer/inner separation ratio = 4.2× (above H-W 2.4×).
+    // masses all below 1500 so every star gets trails - the inner pair
+    // draws spirograph loops, the outer draws a wide arc.
+    const m1 = 1100, m2 = 900, m3 = 800;
+    const M_inner = m1 + m2, M_total = M_inner + m3;
+    const a_inner = 120, r_outer = 500;
+
+    // inner binary: each star's distance from inner COM
+    const d1 = a_inner * m2 / M_inner;  // 54
+    const d2 = a_inner * m1 / M_inner;  // 66
+    const omega_i = Math.sqrt(G * M_inner / (a_inner ** 3));
+
+    // outer orbit: distances from TRIPLE COM (not inner COM)
+    const r_bc = r_outer * m3 / M_total;      // binary COM offset = 142.9
+    const r_3  = r_outer * M_inner / M_total;  // third star offset = 357.1
+    const omega_o = Math.sqrt(G * M_total / (r_outer ** 3));
+
+    const ai = Math.random() * Math.PI * 2;  // inner binary angle
+    const ao = Math.random() * Math.PI * 2;  // outer orbit angle
+
+    // binary COM position & velocity in triple COM frame
+    const bcx = -Math.cos(ao) * r_bc;
+    const bcy = -Math.sin(ao) * r_bc;
+    const bcvx = Math.sin(ao) * omega_o * r_bc;
+    const bcvy = -Math.cos(ao) * omega_o * r_bc;
+
+    // star A (heavier inner)
+    bodies.push(makeBody(
+      ox + bcx + Math.cos(ai) * d1, oy + bcy + Math.sin(ai) * d1,
+      vox + bcvx - Math.sin(ai) * omega_i * d1,
+      voy + bcvy + Math.cos(ai) * omega_i * d1,
+      'star', { mass: m1, radius: 11, color: '#bcd8ff' }
+    ));
+    // star B (lighter inner)
+    bodies.push(makeBody(
+      ox + bcx - Math.cos(ai) * d2, oy + bcy - Math.sin(ai) * d2,
+      vox + bcvx + Math.sin(ai) * omega_i * d2,
+      voy + bcvy - Math.cos(ai) * omega_i * d2,
+      'star', { mass: m2, radius: 10, color: '#ffd24a' }
+    ));
+    // star C (outer third)
+    bodies.push(makeBody(
+      ox + Math.cos(ao) * r_3, oy + Math.sin(ao) * r_3,
+      vox - Math.sin(ao) * omega_o * r_3,
+      voy + Math.cos(ao) * omega_o * r_3,
+      'star', { mass: m3, radius: 9, color: '#ff8a4a' }
+    ));
+
+  } else if (name === 'lagrange') {
+    // v26 rebuild: pinned pair + circumbinary ring ONLY. the old version
+    // stacked planets around each star + a ring at 350-500 - all of it sat
+    // in chaotic zones, and worse: satellites of PINNED stars are
+    // structurally doomed. a pinned star doesn't fall toward its companion,
+    // so its satellites feel the companion's full uniform field as a
+    // constant Stark-like force (no equivalence-principle cancellation),
+    // pumping eccentricity within ~3 orbits no matter the spacing.
+    // validated: ladders at every radius/mass died; pair + wide ring is
+    // 0 losses over 90s x 4 seeds. this scenario is now the slingshot
+    // playground: a static potential means launched bodies trace clean,
+    // repeatable energy-conserving paths through the double well.
+    const sep = 200, m = 2000;
+    bodies.push(makeBody(ox - sep, oy, 0, 0, 'star', { mass: m, fixed: true }));
+    bodies.push(makeBody(ox + sep, oy, 0, 0, 'star', { mass: m, color: '#ff8a4a', fixed: true }));
+    // wide circumbinary ring - far field is a single 4000 point mass
+    for (let i = 0; i < 36; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = 900 + Math.random() * 90;
+      const v = Math.sqrt(G * 2 * m / r);
+      bodies.push(makeBody(
+        ox + Math.cos(a) * r, oy + Math.sin(a) * r,
+        -Math.sin(a) * v, Math.cos(a) * v,
+        'asteroid', { mass: 0.2, radius: 1.5 }
+      ));
+    }
+  }
+}
+
+function loadPreset(name) {
+  if (name === 'empty') {
+    bodies = [];
+    setArmed(null);
+    if (!addMode) cam = { x: 0, y: 0, zoom: 1 };
+    return;
+  }
+  if (addMode) {
+    setArmed(armedScenario === name ? null : name);
+  } else {
+    bodies = [];
+    cam = { x: 0, y: 0, zoom: 1 };
+    ejections = 0; // v17: reset ejection counter
+    spawnPreset(name, 0, 0);
+    setArmed(null);
+    // trisolaris orbits much wider than the other scenarios (the world sits
+    // at r=680 around a compact sun-knot), so frame it on load - otherwise it
+    // spawns off the edge of a phone screen at zoom 1.
+    if (name === 'trisolaris' || name === 'rogue' || name === 'triple' || name === 'kirkwood') zoomToFit();
+  }
+}
+
+function setArmed(name) {
+  armedScenario = name;
+  document.body.classList.toggle('armed', !!name);
+  document.querySelectorAll('[data-preset]').forEach(b => {
+    b.classList.toggle('armed', b.dataset.preset === name);
+  });
+  if (name) {
+    const labels = {
+      three: 'figure-8',
+      dust: 'dust cloud',
+      lagrange: 'fixed pair',
+      trojans: 'trojan swarm',
+      moons: 'moon system',
+      trisolaris: 'trisolaris',
+      tatooine: 'tatooine',
+      rogue: 'rogue star',
+      triple: 'triple',
+      kirkwood: 'kirkwood belt'
+    };
+    document.getElementById('status-name').textContent = labels[name] || name;
+  }
+}
+
+loadPreset('solar');
+
+// -------- physics step (v17: velocity Verlet / leapfrog KDK) --------
+// Second-order symplectic integrator. ~4x better energy conservation than
+// the v16 symplectic Euler at the same step size. The kick-drift-kick form
+// keeps positions and velocities synchronised (important for rendering,
+// orbit prediction, and circularize).
+
+function computeAccelerations() {
+  const n = bodies.length;
+  const ax = new Float64Array(n);
+  const ay = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    for (let j = i + 1; j < n; j++) {
+      const dx = bodies[j].x - bodies[i].x;
+      const dy = bodies[j].y - bodies[i].y;
+      const r2 = dx*dx + dy*dy + SOFT*SOFT;
+      const invR3 = G / (r2 * Math.sqrt(r2));
+      ax[i] += invR3 * dx * bodies[j].mass;
+      ay[i] += invR3 * dy * bodies[j].mass;
+      ax[j] -= invR3 * dx * bodies[i].mass;
+      ay[j] -= invR3 * dy * bodies[i].mass;
+    }
+  }
+  return { ax, ay };
+}
+
+function physicsStep() {
+  const n = bodies.length;
+  const dt = STEP_DT;
+  const hdt = dt * 0.5;
+
+  // ensure stored accelerations exist and match body count
+  if (!storedAx || storedAx.length !== n) {
+    const acc = computeAccelerations();
+    storedAx = acc.ax;
+    storedAy = acc.ay;
+  }
+
+  // half-kick: v += a * dt/2
+  for (let i = 0; i < n; i++) {
+    if (!bodies[i].fixed) {
+      bodies[i].vx += storedAx[i] * hdt;
+      bodies[i].vy += storedAy[i] * hdt;
+    }
+  }
+
+  // drift: x += v * dt
+  for (let i = 0; i < n; i++) {
+    const b = bodies[i];
+    if (!b.fixed) {
+      b.x += b.vx * dt;
+      b.y += b.vy * dt;
+    }
+
+    if (trailsOn) {
+      const lastIdx = b.trail.length - 2;
+      const lastX = lastIdx >= 0 ? b.trail[lastIdx]   : b.x + 999;
+      const lastY = lastIdx >= 0 ? b.trail[lastIdx+1] : b.y + 999;
+      const dx = b.x - lastX, dy = b.y - lastY;
+      if (dx*dx + dy*dy > 4) b.trail.push(b.x, b.y);
+      const max = b.mass > 1500 ? 0 : 240;
+      if (b.trail.length > max * 2) b.trail.splice(0, b.trail.length - max * 2);
+    } else if (b.trail.length) {
+      b.trail.length = 0;
+    }
+  }
+
+  // compute new accelerations at drifted positions
+  const newAcc = computeAccelerations();
+
+  // half-kick: v += a_new * dt/2
+  for (let i = 0; i < n; i++) {
+    if (!bodies[i].fixed) {
+      bodies[i].vx += newAcc.ax[i] * hdt;
+      bodies[i].vy += newAcc.ay[i] * hdt;
+    }
+  }
+
+  // store for next step
+  storedAx = newAcc.ax;
+  storedAy = newAcc.ay;
+
+  // v24: apply thrust force if active
+  if (thrustTarget && thrustScreenPos && !paused) {
+    const idx = bodies.indexOf(thrustTarget);
+    if (idx >= 0 && !thrustTarget.fixed) {
+      // convert body position to screen, compute force direction from body to cursor
+      const bsx = (thrustTarget.x - cam.x) * cam.zoom + W / 2;
+      const bsy = (thrustTarget.y - cam.y) * cam.zoom + H / 2;
+      const tdx = thrustScreenPos[0] - bsx;
+      const tdy = thrustScreenPos[1] - bsy;
+      const tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+      if (tDist > 10) { // dead zone
+        // force scales with screen distance, capped. heavier bodies need more
+        // screen displacement to move. dividing by mass gives acceleration directly.
+        const thrustStrength = 0.0004; // tune: force per screen-pixel per unit mass
+        const cappedDist = Math.min(tDist, 300);
+        const accel = thrustStrength * cappedDist;
+        thrustTarget.vx += (tdx / tDist) * accel * dt;
+        thrustTarget.vy += (tdy / tDist) * accel * dt;
+      }
+    } else {
+      thrustTarget = null; // body was deleted or pinned
+      thrustScreenPos = null;
+    }
+  }
+
+  // ---- collisions (merge) - v25: CoR/bounce path removed, it earned no keep ----
+  let merged = false;
+  if (mergeOn) {
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      if (i >= bodies.length) continue;
+      const a = bodies[i];
+      for (let j = i - 1; j >= 0; j--) {
+        const c = bodies[j];
+        const dx = c.x - a.x, dy = c.y - a.y;
+        const d2 = dx*dx + dy*dy;
+        if (a.fixed && c.fixed) continue;
+
+        // ---- merge mode (original): center overlap within minR + speed check ----
+        const minR = Math.min(a.radius, c.radius);
+        if (d2 > minR * minR) continue;
+        const dvx = c.vx - a.vx, dvy = c.vy - a.vy;
+        const relSpeed = Math.sqrt(dvx*dvx + dvy*dvy);
+        if (relSpeed < 0.8) continue;
+        const total = a.mass + c.mass;
+        const big = a.fixed ? a : (c.fixed ? c : (a.mass >= c.mass ? a : c));
+        const small = big === a ? c : a;
+        if (!big.fixed) {
+          big.vx = (a.vx * a.mass + c.vx * c.mass) / total;
+          big.vy = (a.vy * a.mass + c.vy * c.mass) / total;
+          big.x  = (a.x  * a.mass + c.x  * c.mass) / total;
+          big.y  = (a.y  * a.mass + c.y  * c.mass) / total;
+        }
+        big.mass = total;
+        big.radius = Math.cbrt(a.radius**3 + c.radius**3);
+        addFlash(big.x, big.y, big.radius, small.color);
+        haptic(15);
+        if (big.type !== 'blackhole') {
+          if (big.mass > 7000) {
+            big.type = 'blackhole'; big.color = '#000'; big.glow = 0; big.ring = true;
+          } else if (big.mass > 1500 && big.type !== 'star') {
+            big.type = 'star'; big.color = '#ffd24a'; big.glow = 38;
+          }
+        }
+        const idx = bodies.indexOf(small);
+        if (idx > -1) bodies.splice(idx, 1);
+        merged = true;
+        break;
+      }
+    }
+  }
+
+  // v18: age shatter cooldowns
+  for (const b of bodies) {
+    if (b.shatterAge < Infinity) b.shatterAge++;
+  }
+
+  // v18: Roche tidal disruption
+  // When a body gets close enough to something much more massive that tidal
+  // forces exceed self-gravity, it fragments. Roche limit (fluid body):
+  //   d_Roche = R_small * cbrt(2 * M_big / m_small)
+  // Fragments spray along the tidal axis (radial line to the massive body)
+  // inheriting the original orbital velocity plus tidal stretching.
+  if (tidalOn) {
+    for (let i = bodies.length - 1; i >= 0; i--) {
+      const b = bodies[i];
+      if (b.fixed || b.mass < ROCHE_MIN_MASS) continue;
+      if (b.shatterAge < SHATTER_COOLDOWN) continue; // recently created fragment
+
+      for (let j = 0; j < bodies.length; j++) {
+        if (j === i) continue;
+        const big = bodies[j];
+        const ratio = big.mass / b.mass;
+        if (ratio < ROCHE_MASS_RATIO) continue;
+
+        const dx = big.x - b.x, dy = big.y - b.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        const rocheLimit = b.radius * Math.cbrt(2 * ratio);
+
+        if (dist < rocheLimit && dist > 0.1) {
+          // shatter this body
+          const nFrags = Math.min(10, Math.max(4, Math.round(b.mass / 2)));
+          const fragMass = b.mass / nFrags;
+          const fragRadius = b.radius * Math.cbrt(1 / nFrags);
+          const tidalAngle = Math.atan2(dy, dx); // toward the massive body
+
+          addShatter(b.x, b.y, b.radius, b.color, tidalAngle);
+          haptic(25); // strong feedback for dramatic event
+
+          for (let k = 0; k < nFrags; k++) {
+            // spread along tidal axis with some perpendicular scatter
+            const along = (k / (nFrags - 1) - 0.5) * b.radius * 3;
+            const perp = (Math.random() - 0.5) * b.radius * 1.5;
+            const fx = b.x + Math.cos(tidalAngle) * along - Math.sin(tidalAngle) * perp;
+            const fy = b.y + Math.sin(tidalAngle) * along + Math.cos(tidalAngle) * perp;
+
+            // tidal stretch velocity: fragments closer to massive body accelerate toward it
+            const tidalV = along * 0.008;
+            const fvx = b.vx + Math.cos(tidalAngle) * tidalV + (Math.random() - 0.5) * 0.15;
+            const fvy = b.vy + Math.sin(tidalAngle) * tidalV + (Math.random() - 0.5) * 0.15;
+
+            const frag = makeBody(fx, fy, fvx, fvy, 'asteroid', {
+              mass: fragMass,
+              radius: fragRadius,
+              color: b.color,
+              glow: 0,
+              shatterAge: 0  // starts cooldown
+            });
+            bodies.push(frag);
+          }
+
+          bodies.splice(i, 1);
+          merged = true; // invalidate accel cache
+          break; // this body is gone, move to next
+        }
+      }
+    }
+  }
+
+  // v17: auto-cull escapees past CULL_RADIUS from center of mass
+  if (bodies.length > 1) {
+    let comX = 0, comY = 0, totalM = 0;
+    for (const b of bodies) { comX += b.x * b.mass; comY += b.y * b.mass; totalM += b.mass; }
+    if (totalM > 0) {
+      comX /= totalM; comY /= totalM;
+      for (let i = bodies.length - 1; i >= 0; i--) {
+        const b = bodies[i];
+        if (b.fixed) continue;
+        const dx = b.x - comX, dy = b.y - comY;
+        if (dx*dx + dy*dy > CULL_RADIUS * CULL_RADIUS) {
+          addPop(b.x, b.y, b.color);
+          bodies.splice(i, 1);
+          ejections++;
+          merged = true; // force accel recompute
+        }
+      }
+    }
+  }
+
+  // invalidate stored accelerations if body list changed
+  if (merged) { storedAx = null; storedAy = null; }
+}
+
+// -------- v10: orbit trajectory prediction --------
+// test-particle forward sim: assumes existing bodies are stationary (fast approximation)
+// v25: osculating two-body elements from state vectors, relative to a primary.
+// powers the plunger verdict and tooltip a/e/T. validated in solar_kepler_v1.
+function orbitalElements(x, y, vx, vy, mass, primary) {
+  if (!primary) return null;
+  const mu = G * (primary.mass + mass);
+  const rx = x - primary.x, ry = y - primary.y;
+  const rvx = vx - primary.vx, rvy = vy - primary.vy;
+  const r = Math.hypot(rx, ry);
+  if (r < 1e-6) return null;
+  const v2 = rvx * rvx + rvy * rvy;
+  const E = v2 / 2 - mu / r;
+  const h = rx * rvy - ry * rvx;
+  const evx = (rvy * h) / mu - rx / r;
+  const evy = (-rvx * h) / mu - ry / r;
+  const e = Math.hypot(evx, evy);
+  const bound = E < 0;
+  const a = bound ? -mu / (2 * E) : Infinity;
+  const T = bound ? 2 * Math.PI * Math.sqrt(a * a * a / mu) : Infinity;
+  return { a, e, T, E, bound, r };
+}
+function heaviestBody(excludeMass) {
+  let best = null;
+  for (const b of bodies) {
+    if (excludeMass != null && b.mass <= excludeMass) continue;
+    if (!best || b.mass > best.mass) best = b;
+  }
+  return best;
+}
+
+// v29: gravitational parent - the body exerting the strongest gravitational
+// acceleration on `body` (max M/r²).  Used for orbit-line parent selection
+// so moons orbit their planet, not the distant star.
+function gravParent(body) {
+  let best = null, bestAcc = 0;
+  for (const b of bodies) {
+    if (b === body) continue;
+    const dx = b.x - body.x, dy = b.y - body.y;
+    const r2 = dx * dx + dy * dy;
+    if (r2 < 1) continue;
+    const acc = b.mass / r2;
+    if (acc > bestAcc) { bestAcc = acc; best = b; }
+  }
+  return best;
+}
+
+// v28: shared helper - draw the osculating two-body ellipse for a (real or
+// hypothetical) body relative to a primary.  Returns the orbital elements on
+// success, null if unbound / degenerate / too large.
+function drawOscEllipse(ctx, x, y, vx, vy, mass, primary, color, alpha, lw, opts) {
+  const el = orbitalElements(x, y, vx, vy, mass, primary);
+  if (!el || !el.bound) return null;
+  const maxE = (opts && opts.maxE != null) ? opts.maxE : 0.985;
+  const maxA = (opts && opts.maxA != null) ? opts.maxA : 6000;
+  if (el.e >= maxE || el.a > maxA) return null;
+  const mu = G * (primary.mass + mass);
+  const rx = x - primary.x, ry = y - primary.y;
+  const rvx = vx - primary.vx, rvy = vy - primary.vy;
+  const h = rx * rvy - ry * rvx;
+  const evx = (rvy * h) / mu - rx / el.r;
+  const evy = (-rvx * h) / mu - ry / el.r;
+  const omega = Math.atan2(evy, evx);
+  const semiB = el.a * Math.sqrt(Math.max(0, 1 - el.e * el.e));
+  const cxw = primary.x - Math.cos(omega) * el.a * el.e;
+  const cyw = primary.y - Math.sin(omega) * el.a * el.e;
+  const [csx, csy] = worldToScreen(cxw, cyw);
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = alpha;
+  ctx.lineWidth = lw;
+  ctx.beginPath();
+  ctx.ellipse(csx, csy, el.a * cam.zoom, semiB * cam.zoom, omega, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+  return el;
+}
+
+// v29: draw the osculating ellipse as discrete filled dots sampled at equally-
+// spaced eccentric anomaly angles.  Unlike setLineDash (which ties dot phase
+// to canvas path parameterization and crawls as the ellipse shifts), these
+// dots are locked to the orbital geometry itself - no shimmer.
+function drawOscDots(ctx, x, y, vx, vy, mass, primary, color, alpha, dotR, numDots, opts) {
+  const el = orbitalElements(x, y, vx, vy, mass, primary);
+  if (!el || !el.bound) return null;
+  const maxE = (opts && opts.maxE != null) ? opts.maxE : 0.985;
+  const maxA = (opts && opts.maxA != null) ? opts.maxA : 6000;
+  if (el.e >= maxE || el.a > maxA) return null;
+  const mu = G * (primary.mass + mass);
+  const rx = x - primary.x, ry = y - primary.y;
+  const rvx = vx - primary.vx, rvy = vy - primary.vy;
+  const h = rx * rvy - ry * rvx;
+  const evx = (rvy * h) / mu - rx / el.r;
+  const evy = (-rvx * h) / mu - ry / el.r;
+  const omega = Math.atan2(evy, evx);
+  const semiB = el.a * Math.sqrt(Math.max(0, 1 - el.e * el.e));
+  const cosW = Math.cos(omega), sinW = Math.sin(omega);
+  const fx = primary.x, fy = primary.y;
+  ctx.fillStyle = color;
+  ctx.globalAlpha = alpha;
+  for (let i = 0; i < numDots; i++) {
+    const E = (2 * Math.PI * i) / numDots;
+    // position relative to focus in orbital frame
+    const xf = el.a * (Math.cos(E) - el.e);
+    const yf = semiB * Math.sin(E);
+    // rotate by omega and translate to focus (primary) position
+    const wx = fx + xf * cosW - yf * sinW;
+    const wy = fy + xf * sinW + yf * cosW;
+    const [sx, sy] = worldToScreen(wx, wy);
+    ctx.beginPath();
+    ctx.arc(sx, sy, dotR, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.globalAlpha = 1;
+  return el;
+}
+
+function predictOrbit(wx, wy, vx, vy, mass, steps) {
+  const pts = [];
+  let px = wx, py = wy, pvx = vx, pvy = vy;
+  const dt = STEP_DT;
+
+  for (let s = 0; s < steps; s++) {
+    let ax = 0, ay = 0;
+    for (const b of bodies) {
+      const dx = b.x - px, dy = b.y - py;
+      const r2 = dx*dx + dy*dy + SOFT*SOFT;
+      const invR3 = G / (r2 * Math.sqrt(r2));
+      ax += invR3 * dx * b.mass;
+      ay += invR3 * dy * b.mass;
+    }
+    pvx += ax * dt;
+    pvy += ay * dt;
+    px += pvx * dt;
+    py += pvy * dt;
+    // sample every few steps to keep it light
+    if (s % 2 === 0) pts.push(px, py);
+  }
+  return pts;
+}
+
+// -------- background stars --------
+const bgStars = [];
+function regenBgStars() {
+  bgStars.length = 0;
+  const count = Math.floor((W * H) / 4500);
+  for (let i = 0; i < count; i++) {
+    bgStars.push({
+      x: Math.random() * W,
+      y: Math.random() * H,
+      b: Math.random() * 0.7 + 0.15,
+      tw: Math.random() * Math.PI * 2
+    });
+  }
+}
+regenBgStars();
+window.addEventListener('resize', regenBgStars);
+
+// -------- mass charging --------
+const CHARGE_DELAY = 0.25;
+const CHARGE_RATE = 3.5;
+const CHARGE_MAX = 20;
+
+function getChargeMultiplier() {
+  if (!drag.active || !drag.chargeStart) return 1;
+  const elapsed = (performance.now() - drag.chargeStart) / 1000;
+  if (elapsed < CHARGE_DELAY) return 1;
+  return Math.min(CHARGE_MAX, 1 + (elapsed - CHARGE_DELAY) * CHARGE_RATE);
+}
+
+function getChargedRadius(baseRadius, mult) {
+  return baseRadius * Math.cbrt(mult);
+}
+
+// -------- v10: find nearest body to screen position (for delete) --------
+function findNearestBodyScreen(sx, sy, maxScreenDist) {
+  let best = null, bestD2 = maxScreenDist * maxScreenDist;
+  for (const b of bodies) {
+    const [bsx, bsy] = worldToScreen(b.x, b.y);
+    const dx = bsx - sx, dy = bsy - sy;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bestD2) { bestD2 = d2; best = b; }
+  }
+  return best;
+}
+
+function deleteBodyAt(sx, sy) {
+  const target = findNearestBodyScreen(sx, sy, 40);
+  if (!target) return false;
+  addPop(target.x, target.y, target.color);
+  const idx = bodies.indexOf(target);
+  if (idx > -1) bodies.splice(idx, 1);
+  storedAx = null; storedAy = null; // v17: invalidate Verlet cache
+  haptic(12);
+  return true;
+}
+
+// v11: toggle pin on nearest body
+function pinBodyAt(sx, sy) {
+  const target = findNearestBodyScreen(sx, sy, 40);
+  if (!target) return false;
+  target.fixed = !target.fixed;
+  if (target.fixed) {
+    // zero velocity when pinning
+    target.vx = 0;
+    target.vy = 0;
+  }
+  haptic(10);
+  return true;
+}
+
+// v15: find the body exerting the strongest gravitational pull on `body`,
+// among bodies more massive than it. uses M/r^2 (acceleration magnitude)
+// instead of nearest-only, so a moon between two planets picks the planet
+// that's actually dominating its orbit.
+function findGravParent(body) {
+  let best = null, bestPull = -Infinity;
+  for (const other of bodies) {
+    if (other === body) continue;
+    if (other.mass <= body.mass) continue;
+    const dx = other.x - body.x;
+    const dy = other.y - body.y;
+    const r2 = dx*dx + dy*dy + SOFT*SOFT;
+    const pull = other.mass / r2;
+    if (pull > bestPull) { bestPull = pull; best = other; }
+  }
+  return best;
+}
+
+// v15: snap a body into a circular orbit around its dominant parent.
+// preserves prograde vs retrograde direction and inherits parent velocity
+// so the orbit stays put even if the parent is itself moving.
+function circularizeBody(body) {
+  if (body.fixed) return false;
+  const parent = findGravParent(body);
+  if (!parent) return false;
+  const dx = body.x - parent.x;
+  const dy = body.y - parent.y;
+  const r = Math.sqrt(dx*dx + dy*dy);
+  if (r < 1) return false;
+  const v = Math.sqrt(G * parent.mass / r);
+  // tangent (perpendicular to radius vector, ccw)
+  const tx = -dy / r;
+  const ty =  dx / r;
+  // preserve prograde/retrograde based on current velocity relative to parent
+  const rvx = body.vx - parent.vx;
+  const rvy = body.vy - parent.vy;
+  const dir = (rvx * tx + rvy * ty) >= 0 ? 1 : -1;
+  body.vx = parent.vx + dir * v * tx;
+  body.vy = parent.vy + dir * v * ty;
+  body.trail.length = 0; // clear old trail so the new orbit is visually clean
+  addFlash(body.x, body.y, body.radius * 2, '#7cffb0');
+  return true;
+}
+
+function circularizeAt(sx, sy) {
+  const target = findNearestBodyScreen(sx, sy, 40);
+  if (!target) return false;
+  if (circularizeBody(target)) {
+    haptic(8);
+    return true;
+  }
+  return false;
+}
+
+// -------- rendering --------
+let frameCount = 0;
+function render() {
+  frameCount++;
+  const now = performance.now();
+
+  ctx.fillStyle = '#04050a';
+  ctx.fillRect(0, 0, W, H);
+
+  for (const s of bgStars) {
+    const tw = 0.5 + 0.5 * Math.sin(s.tw + frameCount * 0.02);
+    ctx.fillStyle = `rgba(255, 245, 220, ${s.b * tw * 0.7})`;
+    ctx.fillRect(s.x, s.y, 1, 1);
+  }
+
+  // v26: trails fade to nothing - drawn in chunks of rising alpha,
+  // oldest end invisible, newest end brightest. small bodies cap lower
+  // so particle scenarios (dust, kirkwood) don't wash out.
+  const TRAIL_CHUNKS = 6;
+  for (const b of bodies) {
+    if (b.trail.length < 4) continue;
+    const peak = b.mass >= 5 ? 0.5 : 0.26;
+    const pts = b.trail.length / 2;
+    const per = Math.max(2, Math.ceil(pts / TRAIL_CHUNKS));
+    ctx.strokeStyle = b.color;
+    ctx.lineWidth = b.mass >= 5 ? 1.5 : 1;
+    for (let c = 0; c < TRAIL_CHUNKS; c++) {
+      const i0 = c * per * 2;
+      if (i0 >= b.trail.length - 2) break;
+      const i1 = Math.min(b.trail.length - 2, (c + 1) * per * 2);
+      ctx.globalAlpha = peak * ((c + 1) / TRAIL_CHUNKS) * ((c + 1) / TRAIL_CHUNKS);
+      ctx.beginPath();
+      const [x0, y0] = worldToScreen(b.trail[i0], b.trail[i0 + 1]);
+      ctx.moveTo(x0, y0);
+      for (let i = i0 + 2; i <= i1; i += 2) {
+        const [x, y] = worldToScreen(b.trail[i], b.trail[i + 1]);
+        ctx.lineTo(x, y);
+      }
+      ctx.stroke();
+    }
+  }
+  ctx.globalAlpha = 1;
+
+  for (const b of bodies) {
+    const [sx, sy] = worldToScreen(b.x, b.y);
+    if (sx < -200 || sx > W + 200 || sy < -200 || sy > H + 200) continue;
+    const r = Math.max(0.8, b.radius * cam.zoom);
+
+    if (b.glow > 0) {
+      const gr = r + b.glow * Math.min(cam.zoom, 1.5);
+      const grad = ctx.createRadialGradient(sx, sy, 0, sx, sy, gr);
+      grad.addColorStop(0, b.color);
+      grad.addColorStop(0.25, b.color);
+      grad.addColorStop(1, 'rgba(0,0,0,0)');
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = grad;
+      ctx.beginPath();
+      ctx.arc(sx, sy, gr, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    if (b.ring) {
+      ctx.strokeStyle = '#ff8a4a';
+      ctx.lineWidth = 2;
+      ctx.globalAlpha = 0.85;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r * 2.6, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.strokeStyle = 'rgba(255, 200, 100, 0.35)';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.arc(sx, sy, r * 4, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.globalAlpha = 1;
+    }
+
+    // v25: saturn's tilted ring
+    if (b.saturnRing) {
+      ctx.strokeStyle = 'rgba(232, 216, 168, 0.8)';
+      ctx.lineWidth = Math.max(1.2, 1.8 * cam.zoom);
+      ctx.beginPath();
+      ctx.ellipse(sx, sy, r * 2.1, r * 0.78, 0.45, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    ctx.fillStyle = b.color;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.fill();
+
+    // v11: pinned body indicator - small diamond + subtle ring
+    if (b.fixed) {
+      const pr = r + 5;
+      // rotating dashed ring
+      ctx.save();
+      ctx.translate(sx, sy);
+      ctx.rotate(frameCount * 0.008);
+      ctx.strokeStyle = 'rgba(255, 184, 74, 0.5)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(0, 0, pr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // diamond
+      const d = 4;
+      ctx.fillStyle = 'rgba(255, 184, 74, 0.8)';
+      ctx.beginPath();
+      ctx.moveTo(0, -pr - d);
+      ctx.lineTo(d * 0.6, -pr);
+      ctx.lineTo(0, -pr + d);
+      ctx.lineTo(-d * 0.6, -pr);
+      ctx.closePath();
+      ctx.fill();
+      ctx.restore();
+    }
+  }
+
+  // ---- v27: orbit lines - osculating ellipse for every bound body ----
+  // v29: dots are filled circles at fixed eccentric-anomaly angles (no
+  // setLineDash - that ties phase to canvas path parameterization and
+  // crawls/shimmers as the ellipse shifts).  gravParent filter: only draw
+  // first-level satellites (parent = system primary), skip moons.
+  if (showOrbitLines) {
+    const primary = heaviestBody(null);
+    if (primary) {
+      for (const b of bodies) {
+        if (b === primary || b.fixed) continue;
+        if (gravParent(b) !== primary) continue;
+        drawOscDots(ctx, b.x, b.y, b.vx, b.vy, b.mass, primary,
+          b.color, 0.45, 1.2, 60);
+      }
+    }
+  }
+
+  // ---- v10: merge flashes ----
+  for (let i = flashes.length - 1; i >= 0; i--) {
+    const f = flashes[i];
+    const age = now - f.born;
+    if (age > f.life) { flashes.splice(i, 1); continue; }
+    const t = age / f.life;
+    const [sx, sy] = worldToScreen(f.x, f.y);
+    const r = f.radius * cam.zoom * (1 + t * 3);
+
+    // bright core flash
+    ctx.globalAlpha = (1 - t) * 0.6;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 0.3 * (1 - t), 0, Math.PI * 2);
+    ctx.fill();
+
+    // expanding ring
+    ctx.globalAlpha = (1 - t * t) * 0.5;
+    ctx.strokeStyle = f.color;
+    ctx.lineWidth = 2 * (1 - t);
+    ctx.beginPath();
+    ctx.arc(sx, sy, r, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // outer glow ring
+    ctx.globalAlpha = (1 - t * t) * 0.2;
+    ctx.strokeStyle = '#fff';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, r * 1.4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- v10: deletion pop effects ----
+  for (let i = pops.length - 1; i >= 0; i--) {
+    const p = pops[i];
+    const age = now - p.born;
+    if (age > p.life) { pops.splice(i, 1); continue; }
+    const t = age / p.life;
+    const [sx, sy] = worldToScreen(p.x, p.y);
+
+    // expanding X mark
+    const size = 6 + t * 18;
+    ctx.globalAlpha = (1 - t) * 0.8;
+    ctx.strokeStyle = '#ff6a4a';
+    ctx.lineWidth = 2 * (1 - t);
+    ctx.beginPath();
+    ctx.moveTo(sx - size, sy - size);
+    ctx.lineTo(sx + size, sy + size);
+    ctx.moveTo(sx + size, sy - size);
+    ctx.lineTo(sx - size, sy + size);
+    ctx.stroke();
+
+    // ring burst
+    ctx.globalAlpha = (1 - t) * 0.4;
+    ctx.strokeStyle = p.color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(sx, sy, size * 1.5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- v18: shatter burst effects ----
+  for (let i = shatters.length - 1; i >= 0; i--) {
+    const s = shatters[i];
+    const age = now - s.born;
+    if (age > s.life) { shatters.splice(i, 1); continue; }
+    const t = age / s.life;
+    const [sx, sy] = worldToScreen(s.x, s.y);
+    const r = s.radius * cam.zoom;
+
+    // elongated burst along tidal axis
+    ctx.save();
+    ctx.translate(sx, sy);
+    ctx.rotate(s.angle);
+
+    // central flash
+    ctx.globalAlpha = (1 - t) * 0.7;
+    ctx.fillStyle = '#fff';
+    ctx.beginPath();
+    ctx.ellipse(0, 0, r * 0.4 * (1 - t), r * 0.2 * (1 - t), 0, 0, Math.PI * 2);
+    ctx.fill();
+
+    // expanding tidal streaks (elongated along axis)
+    const streakR = r * (0.5 + t * 2.5);
+    ctx.globalAlpha = (1 - t * t) * 0.5;
+    ctx.strokeStyle = s.color;
+    ctx.lineWidth = 2 * (1 - t);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, streakR, streakR * 0.35, 0, 0, Math.PI * 2);
+    ctx.stroke();
+
+    // debris sparks
+    ctx.globalAlpha = (1 - t) * 0.6;
+    ctx.fillStyle = s.color;
+    for (let k = 0; k < 6; k++) {
+      const a = (k / 6) * Math.PI * 2 + t * 0.5;
+      const sparkR = streakR * (0.6 + 0.4 * Math.abs(Math.cos(a)));
+      const sparkX = Math.cos(a) * sparkR;
+      const sparkY = Math.sin(a) * sparkR * 0.35;
+      ctx.beginPath();
+      ctx.arc(sparkX, sparkY, 1.5 * (1 - t), 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // ---- v10: parent preview + orbit trace (body mode, no plunger active) ----
+  const showPreview = drag.active && !armedScenario;
+  const dragDist = drag.active
+    ? Math.hypot(drag.currentScreen[0] - drag.startScreen[0],
+                 drag.currentScreen[1] - drag.startScreen[1])
+    : 0;
+  const isTapMode = showPreview && dragDist < MIN_DRAG;
+
+  if (isTapMode && bodies.length > 0) {
+    const mult = getChargeMultiplier();
+    const t = TYPES[currentType];
+    const chargedMass = t.mass * mult;
+    // use current world position for preview (accounts for camera movement)
+    const [wx, wy] = screenToWorld(drag.startScreen[0], drag.startScreen[1]);
+    const nearest = findNearestMassive(wx, wy, chargedMass);
+
+    if (nearest) {
+      const [sx, sy] = worldToScreen(wx, wy);
+      const [psx, psy] = worldToScreen(nearest.body.x, nearest.body.y);
+
+      // parent tether line
+      ctx.strokeStyle = 'rgba(255, 184, 74, 0.6)';
+      ctx.lineWidth = 1.6;
+      ctx.setLineDash([3, 6]);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(psx, psy);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // parent highlight ring
+      const pr = Math.max(3, nearest.body.radius * cam.zoom);
+      ctx.strokeStyle = 'rgba(255, 184, 74, 0.75)';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.arc(psx, psy, pr + 6, 0, Math.PI * 2);
+      ctx.stroke();
+
+      // orbit trajectory trace - v28: full osculating ellipse (was 300-step
+      // forward sim that only showed a partial arc for gentle placements)
+      const orb = orbitalVelocity(wx, wy, nearest.body, chargedMass);
+      const vx = nearest.body.vx + orb.vx;
+      const vy = nearest.body.vy + orb.vy;
+      const traceColor = t.color === '#000' ? 'rgb(140, 140, 140)' : t.color;
+      drawOscEllipse(ctx, wx, wy, vx, vy, chargedMass, nearest.body,
+        traceColor, 0.5, 1.5, { maxA: 10000 });
+    }
+  }
+
+  // ---- plunger orbit trace - v25: verdict-colored (bound = cyan, escape = red) ----
+  const isPlungerMode = showPreview && dragDist >= MIN_DRAG;
+  if (isPlungerMode && bodies.length > 0) {
+    const mult = getChargeMultiplier();
+    const t = TYPES[currentType];
+    const chargedMass = t.mass * mult;
+    const sdx = drag.currentScreen[0] - drag.startScreen[0];
+    const sdy = drag.currentScreen[1] - drag.startScreen[1];
+    const ramp = Math.min(1, (dragDist - MIN_DRAG) / PLUNGER_RAMP);
+    const pvx = -(sdx / cam.zoom) * 0.018 * ramp;
+    const pvy = -(sdy / cam.zoom) * 0.018 * ramp;
+    const [wx, wy] = screenToWorld(drag.startScreen[0], drag.startScreen[1]);
+
+    // verdict relative to the dominant attractor
+    const primary = heaviestBody(chargedMass);
+    const el = primary ? orbitalElements(wx, wy, pvx, pvy, chargedMass, primary) : null;
+    const verdictStroke = el && el.bound ? 'rgba(95, 223, 255,' : 'rgba(255, 106, 74,';
+
+    // v28: bound orbit -> full osculating ellipse (decoupled from pull distance).
+    // escape -> forward sim (no closed curve to draw).  both solid (no dash crawl).
+    let drewEllipse = false;
+    if (el && el.bound && primary) {
+      drewEllipse = !!drawOscEllipse(ctx, wx, wy, pvx, pvy, chargedMass, primary,
+        'rgb(95, 223, 255)', 0.55, 2.0, { maxE: 0.998, maxA: 20000 });
+    }
+    if (!drewEllipse) {
+      // escape or degenerate - use forward sim
+      const pts = predictOrbit(wx, wy, pvx, pvy, chargedMass, 300);
+      if (pts.length >= 4) {
+        ctx.strokeStyle = el ? verdictStroke + '0.7)'
+          : (t.color === '#000' ? 'rgba(140,140,140,0.6)' : t.color);
+        if (!el) ctx.globalAlpha = 0.6;
+        ctx.lineWidth = 2.0;
+        ctx.beginPath();
+        const [ox0, oy0] = worldToScreen(pts[0], pts[1]);
+        ctx.moveTo(ox0, oy0);
+        for (let i = 2; i < pts.length; i += 2) {
+          const [ox, oy] = worldToScreen(pts[i], pts[i + 1]);
+          ctx.lineTo(ox, oy);
+        }
+        ctx.stroke();
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // verdict label near the cursor
+    if (el) {
+      ctx.font = '600 11px "JetBrains Mono", monospace';
+      ctx.fillStyle = verdictStroke + '0.95)';
+      const vt = (el.bound ? 'ellipse' : 'escape') + ' \u00b7 e ' + el.e.toFixed(2);
+      ctx.fillText(vt, drag.currentScreen[0] + 16, drag.currentScreen[1] - 12);
+    }
+  }
+
+  // ---- launch indicator (pinball plunger style) ----
+  if (drag.active) {
+    const sx = drag.startScreen[0], sy = drag.startScreen[1];
+    const mx = drag.currentScreen[0], my = drag.currentScreen[1];
+    const pullDx = mx - sx, pullDy = my - sy;
+    const dDist = Math.hypot(pullDx, pullDy);
+    const isArmed = !!armedScenario;
+
+    const lineColor = isArmed ? 'rgba(95, 223, 255, 0.8)' : 'rgba(255, 184, 74, 0.8)';
+    const lineColorDim = isArmed ? 'rgba(95, 223, 255, 0.35)' : 'rgba(255, 184, 74, 0.35)';
+    const fillColor = isArmed ? 'rgba(95, 223, 255, 0.9)' : 'rgba(255, 184, 74, 0.9)';
+
+    // charge ring (body mode only)
+    if (!isArmed) {
+      const mult = getChargeMultiplier();
+      const t = TYPES[currentType];
+      const chargedR = getChargedRadius(t.radius, mult) * cam.zoom;
+      const isCharging = mult > 1.05;
+
+      if (isCharging) {
+        const ringR = chargedR + 6 + (mult - 1) * 2;
+        const pulsePhase = Math.sin(frameCount * 0.12) * 0.15 + 0.85;
+
+        ctx.globalAlpha = 0.12 * pulsePhase;
+        ctx.fillStyle = '#c98aff';
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR + 8, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.globalAlpha = 0.7 * pulsePhase;
+        ctx.strokeStyle = '#c98aff';
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(sx, sy, ringR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = '#c98aff';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('×' + mult.toFixed(1), sx, sy - ringR - 8);
+        ctx.globalAlpha = 1;
+      }
+
+      // body preview
+      ctx.fillStyle = t.color === '#000' ? '#444' : t.color;
+      ctx.globalAlpha = 0.55;
+      ctx.beginPath();
+      ctx.arc(sx, sy, Math.max(2, chargedR), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.globalAlpha = 1;
+    }
+
+    // armed crosshair at spawn point
+    if (isArmed) {
+      const armColor = 'rgba(95, 223, 255, 0.7)';
+      ctx.strokeStyle = armColor;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.arc(sx, sy, 28, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      ctx.beginPath();
+      ctx.moveTo(sx - 8, sy);
+      ctx.lineTo(sx + 8, sy);
+      ctx.moveTo(sx, sy - 8);
+      ctx.lineTo(sx, sy + 8);
+      ctx.stroke();
+    }
+
+    if (dDist >= MIN_DRAG) {
+      const launchDx = -pullDx, launchDy = -pullDy;
+      const launchAng = Math.atan2(launchDy, launchDx);
+
+      ctx.strokeStyle = lineColorDim;
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 4]);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(mx, my);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      const trajEndX = sx + launchDx;
+      const trajEndY = sy + launchDy;
+      ctx.strokeStyle = lineColor;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 5]);
+      ctx.beginPath();
+      ctx.moveTo(sx, sy);
+      ctx.lineTo(trajEndX, trajEndY);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = fillColor;
+      ctx.beginPath();
+      ctx.moveTo(trajEndX, trajEndY);
+      ctx.lineTo(trajEndX - 8 * Math.cos(launchAng - 0.4), trajEndY - 8 * Math.sin(launchAng - 0.4));
+      ctx.lineTo(trajEndX - 8 * Math.cos(launchAng + 0.4), trajEndY - 8 * Math.sin(launchAng + 0.4));
+      ctx.closePath();
+      ctx.fill();
+    }
+  }
+
+  // armed-scenario hover crosshair
+  if (armedScenario && !drag.active && hoverPos) {
+    ctx.strokeStyle = 'rgba(95, 223, 255, 0.7)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 4]);
+    ctx.beginPath();
+    ctx.arc(hoverPos[0], hoverPos[1], 28, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(hoverPos[0] - 8, hoverPos[1]);
+    ctx.lineTo(hoverPos[0] + 8, hoverPos[1]);
+    ctx.moveTo(hoverPos[0], hoverPos[1] - 8);
+    ctx.lineTo(hoverPos[0], hoverPos[1] + 8);
+    ctx.stroke();
+  }
+
+  // ---- v10: delete mode hover highlight ----
+  if (deleteMode && hoverPos && !drag.active) {
+    const target = findNearestBodyScreen(hoverPos[0], hoverPos[1], 40);
+    if (target) {
+      const [tsx, tsy] = worldToScreen(target.x, target.y);
+      const tr = Math.max(4, target.radius * cam.zoom) + 6;
+      ctx.strokeStyle = 'rgba(255, 106, 74, 0.7)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.arc(tsx, tsy, tr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // x mark
+      const xs = 5;
+      ctx.beginPath();
+      ctx.moveTo(tsx - xs, tsy - xs);
+      ctx.lineTo(tsx + xs, tsy + xs);
+      ctx.moveTo(tsx + xs, tsy - xs);
+      ctx.lineTo(tsx - xs, tsy + xs);
+      ctx.stroke();
+    }
+  }
+
+  // ---- v11: pin mode hover highlight ----
+  if (pinMode && hoverPos && !drag.active) {
+    const target = findNearestBodyScreen(hoverPos[0], hoverPos[1], 40);
+    if (target) {
+      const [tsx, tsy] = worldToScreen(target.x, target.y);
+      const tr = Math.max(4, target.radius * cam.zoom) + 8;
+      ctx.strokeStyle = target.fixed ? 'rgba(255, 184, 74, 0.7)' : 'rgba(255, 184, 74, 0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(tsx, tsy, tr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+      // pin/unpin label
+      ctx.globalAlpha = 0.7;
+      ctx.fillStyle = '#ffb84a';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(target.fixed ? 'unpin' : 'pin', tsx, tsy - tr - 6);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // ---- v15: circularize mode hover preview ----
+  // shows: target highlight + tether to parent + the new circular orbit
+  if (circularizeMode && hoverPos && !drag.active) {
+    const target = findNearestBodyScreen(hoverPos[0], hoverPos[1], 40);
+    if (target) {
+      const [tsx, tsy] = worldToScreen(target.x, target.y);
+      const tr = Math.max(4, target.radius * cam.zoom) + 8;
+
+      const parent = findGravParent(target);
+      const valid = parent && !target.fixed;
+
+      // highlight ring on target
+      ctx.strokeStyle = valid ? 'rgba(124, 255, 176, 0.7)' : 'rgba(124, 255, 176, 0.25)';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.arc(tsx, tsy, tr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (valid) {
+        const dx = target.x - parent.x;
+        const dy = target.y - parent.y;
+        const r = Math.sqrt(dx*dx + dy*dy);
+        const [psx, psy] = worldToScreen(parent.x, parent.y);
+
+        // tether line to parent
+        ctx.strokeStyle = 'rgba(124, 255, 176, 0.3)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 6]);
+        ctx.beginPath();
+        ctx.moveTo(tsx, tsy);
+        ctx.lineTo(psx, psy);
+        ctx.stroke();
+
+        // predicted circular orbit (drawn as actual circle, not predicted)
+        ctx.strokeStyle = 'rgba(124, 255, 176, 0.45)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([2, 4]);
+        ctx.beginPath();
+        ctx.arc(psx, psy, r * cam.zoom, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // parent ring
+        const pr = Math.max(3, parent.radius * cam.zoom);
+        ctx.strokeStyle = 'rgba(124, 255, 176, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(psx, psy, pr + 5, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+
+      // label
+      ctx.globalAlpha = 0.75;
+      ctx.fillStyle = '#7cffb0';
+      ctx.font = '9px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      const label = target.fixed ? 'pinned' : (parent ? 'circularize' : 'no parent');
+      ctx.fillText(label, tsx, tsy - tr - 6);
+      ctx.globalAlpha = 1;
+    }
+  }
+
+  // v24: thrust mode visuals
+  if (thrustMode) {
+    if (thrustTarget && thrustScreenPos) {
+      // active thrust: draw arrow from body to cursor
+      const [bsx, bsy] = worldToScreen(thrustTarget.x, thrustTarget.y);
+      const br = Math.max(4, thrustTarget.radius * cam.zoom);
+      const tdx = thrustScreenPos[0] - bsx;
+      const tdy = thrustScreenPos[1] - bsy;
+      const tDist = Math.sqrt(tdx * tdx + tdy * tdy);
+
+      if (tDist > 10) {
+        const nx = tdx / tDist, ny = tdy / tDist;
+        const cappedDist = Math.min(tDist, 300);
+        const intensity = cappedDist / 300;
+
+        // glow behind arrow
+        ctx.save();
+        ctx.shadowColor = '#ff944a';
+        ctx.shadowBlur = 12 + intensity * 15;
+
+        // main arrow line
+        ctx.strokeStyle = `rgba(255, 148, 74, ${0.5 + intensity * 0.5})`;
+        ctx.lineWidth = 2 + intensity * 2;
+        ctx.beginPath();
+        ctx.moveTo(bsx + nx * (br + 4), bsy + ny * (br + 4));
+        ctx.lineTo(bsx + tdx * 0.85, bsy + tdy * 0.85);
+        ctx.stroke();
+
+        // arrowhead
+        const ax = bsx + tdx * 0.85, ay = bsy + tdy * 0.85;
+        const headLen = 8 + intensity * 6;
+        ctx.fillStyle = `rgba(255, 148, 74, ${0.6 + intensity * 0.4})`;
+        ctx.beginPath();
+        ctx.moveTo(ax + nx * headLen, ay + ny * headLen);
+        ctx.lineTo(ax - ny * headLen * 0.4 - nx * headLen * 0.3, ay + nx * headLen * 0.4 - ny * headLen * 0.3);
+        ctx.lineTo(ax + ny * headLen * 0.4 - nx * headLen * 0.3, ay - nx * headLen * 0.4 - ny * headLen * 0.3);
+        ctx.closePath();
+        ctx.fill();
+        ctx.restore();
+
+        // pulsing ring around thrusted body
+        const pulse = 0.5 + 0.5 * Math.sin(performance.now() * 0.008);
+        ctx.strokeStyle = `rgba(255, 148, 74, ${0.3 + pulse * 0.4})`;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.arc(bsx, bsy, br + 6 + pulse * 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    } else if (hoverPos && !drag.active) {
+      // hover: show which body you'd grab
+      const target = findNearestBodyScreen(hoverPos[0], hoverPos[1], 60);
+      if (target && !target.fixed) {
+        const [tsx, tsy] = worldToScreen(target.x, target.y);
+        const tr = Math.max(4, target.radius * cam.zoom) + 8;
+        ctx.strokeStyle = 'rgba(255, 148, 74, 0.5)';
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([4, 4]);
+        ctx.beginPath();
+        ctx.arc(tsx, tsy, tr, 0, Math.PI * 2);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        ctx.globalAlpha = 0.7;
+        ctx.fillStyle = '#ff944a';
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('thrust', tsx, tsy - tr - 6);
+        ctx.globalAlpha = 1;
+      }
+    }
+  }
+
+  // v22: body info tooltip
+  updateTooltip();
+}
+// -------- haptics --------
+function haptic(ms = 8) {
+  if (navigator.vibrate) navigator.vibrate(ms);
+}
+
+// -------- input --------
+const drag = { active: false, startScreen: null, currentScreen: null, startWorld: null, chargeStart: 0 };
+const pan = { active: false, lastX: 0, lastY: 0, moved: false };
+let hoverPos = null;
+let lastTouchTime = 0;
+
+function startDrag(x, y) {
+  // v19: if mobile drawer is open, close it and suppress this tap
+  if (window.innerWidth <= 640 && !document.body.classList.contains('collapsed')) {
+    document.body.classList.add('collapsed');
+    if (typeof syncMobileBar === 'function') syncMobileBar();
+    return;
+  }
+  // v10: delete mode intercepts taps
+  if (deleteMode) {
+    deleteBodyAt(x, y);
+    return;
+  }
+  // v11: pin mode intercepts taps
+  if (pinMode) {
+    pinBodyAt(x, y);
+    return;
+  }
+  // v15: circularize mode intercepts taps
+  if (circularizeMode) {
+    circularizeAt(x, y);
+    return;
+  }
+  // v24: thrust mode - grab a body and drag to apply force
+  if (thrustMode) {
+    const target = findNearestBodyScreen(x, y, 60);
+    if (target && !target.fixed) {
+      thrustTarget = target;
+      thrustScreenPos = [x, y];
+      // don't start normal drag
+      return;
+    }
+    return; // clicked empty space in thrust mode, do nothing
+  }
+  drag.active = true;
+  drag.startScreen = [x, y];
+  drag.currentScreen = [x, y];
+  drag.startWorld = screenToWorld(x, y);
+  drag.chargeStart = performance.now();
+}
+
+function findNearestMassive(wx, wy, minMass) {
+  let best = null, bestD2 = Infinity;
+  for (const b of bodies) {
+    if (b.mass <= minMass) continue;
+    const dx = b.x - wx, dy = b.y - wy;
+    const d2 = dx*dx + dy*dy;
+    if (d2 < bestD2) { bestD2 = d2; best = b; }
+  }
+  return best ? { body: best, dist: Math.sqrt(bestD2) } : null;
+}
+
+function orbitalVelocity(wx, wy, around, placedMass) {
+  const dx = wx - around.x, dy = wy - around.y;
+  const r = Math.sqrt(dx*dx + dy*dy);
+  if (r < 1) return { vx: 0, vy: 0 };
+  // v29: relative circular velocity sqrt(G*(M+m)/r) instead of test-particle
+  // sqrt(G*M/r).  Without the placed mass, charged bodies are too slow and
+  // fall inward (perigee drops with charge).
+  const v = Math.sqrt(G * (around.mass + (placedMass || 0)) / r);
+  const nx = -dy / r, ny = dx / r;
+  return { vx: nx * v, vy: ny * v };
+}
+
+function endDrag(x, y) {
+  if (!drag.active) return;
+  drag.active = false;
+
+  const sdx = x - drag.startScreen[0];
+  const sdy = y - drag.startScreen[1];
+  const dragDist = Math.hypot(sdx, sdy);
+  const dragged = dragDist >= MIN_DRAG;
+
+  const ramp = dragged ? Math.min(1, (dragDist - MIN_DRAG) / PLUNGER_RAMP) : 0;
+  const plungerVx = dragged ? -(sdx / cam.zoom) * 0.018 * ramp : 0;
+  const plungerVy = dragged ? -(sdy / cam.zoom) * 0.018 * ramp : 0;
+
+  const spawnX = drag.startWorld[0];
+  const spawnY = drag.startWorld[1];
+
+  if (armedScenario) {
+    spawnPreset(armedScenario, spawnX, spawnY, plungerVx, plungerVy);
+    haptic(20);
+  } else {
+    const mult = getChargeMultiplier();
+    const t = TYPES[currentType];
+    const chargedMass = t.mass * mult;
+    const chargedRadius = getChargedRadius(t.radius, mult);
+
+    let vx, vy;
+    if (dragged) {
+      vx = plungerVx;
+      vy = plungerVy;
+    } else {
+      const nearest = findNearestMassive(spawnX, spawnY, chargedMass);
+      if (nearest) {
+        const orb = orbitalVelocity(spawnX, spawnY, nearest.body, chargedMass);
+        vx = nearest.body.vx + orb.vx;
+        vy = nearest.body.vy + orb.vy;
+      } else {
+        vx = 0;
+        vy = 0;
+      }
+    }
+
+    bodies.push(makeBody(spawnX, spawnY, vx, vy, currentType, {
+      mass: chargedMass,
+      radius: chargedRadius
+    }));
+    haptic();
+  }
+  drag.chargeStart = 0;
+}
+
+// v10: right-click = delete (disambiguated from pan via pan.moved flag)
+canvas.addEventListener('mousedown', e => {
+  if (performance.now() - lastTouchTime < 500) return;
+  if (e.button === 0) startDrag(e.clientX, e.clientY);
+  else if (e.button === 2) {
+    pan.active = true;
+    pan.lastX = e.clientX;
+    pan.lastY = e.clientY;
+    pan.moved = false;
+  } else if (e.button === 1) {
+    // middle click pan
+    pan.active = true;
+    pan.lastX = e.clientX;
+    pan.lastY = e.clientY;
+    pan.moved = false;
+  }
+});
+canvas.addEventListener('mousemove', e => {
+  if (performance.now() - lastTouchTime < 500) return;
+  hoverPos = [e.clientX, e.clientY];
+  if (thrustTarget) thrustScreenPos = [e.clientX, e.clientY];
+  if (drag.active) drag.currentScreen = [e.clientX, e.clientY];
+  if (pan.active) {
+    const dx = e.clientX - pan.lastX, dy = e.clientY - pan.lastY;
+    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pan.moved = true;
+    cam.x -= dx / cam.zoom;
+    cam.y -= dy / cam.zoom;
+    pan.lastX = e.clientX; pan.lastY = e.clientY;
+  }
+});
+canvas.addEventListener('mouseleave', () => {
+  hoverPos = null;
+  if (thrustTarget) { thrustTarget = null; thrustScreenPos = null; }
+});
+canvas.addEventListener('mouseup', e => {
+  if (performance.now() - lastTouchTime < 500) return;
+  if (thrustTarget) { thrustTarget = null; thrustScreenPos = null; }
+  if (e.button === 0) endDrag(e.clientX, e.clientY);
+  if (e.button === 2) {
+    // v10: right-click without dragging = delete nearest body
+    if (!pan.moved) {
+      deleteBodyAt(e.clientX, e.clientY);
+    }
+    pan.active = false;
+  }
+  if (e.button === 1) pan.active = false;
+});
+canvas.addEventListener('contextmenu', e => e.preventDefault());
+
+canvas.addEventListener('wheel', e => {
+  e.preventDefault();
+  const factor = e.deltaY < 0 ? 1.15 : 0.87;
+  const [wx, wy] = screenToWorld(e.clientX, e.clientY);
+  cam.zoom = Math.max(0.04, Math.min(8, cam.zoom * factor));
+  const [nwx, nwy] = screenToWorld(e.clientX, e.clientY);
+  cam.x += wx - nwx; cam.y += wy - nwy;
+}, { passive: false });
+
+// touch
+let pinch = null;
+canvas.addEventListener('touchstart', e => {
+  lastTouchTime = performance.now();
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    startDrag(t.clientX, t.clientY);
+  } else if (e.touches.length === 2) {
+    drag.active = false;
+    drag.chargeStart = 0;
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const dx = a.clientX - b.clientX, dy = a.clientY - b.clientY;
+    pinch = {
+      dist: Math.hypot(dx, dy),
+      cx: (a.clientX + b.clientX) / 2,
+      cy: (a.clientY + b.clientY) / 2
+    };
+  }
+}, { passive: false });
+
+canvas.addEventListener('touchmove', e => {
+  if (e.touches.length === 1) {
+    const t = e.touches[0];
+    if (thrustTarget) thrustScreenPos = [t.clientX, t.clientY];
+    if (drag.active) drag.currentScreen = [t.clientX, t.clientY];
+  } else if (e.touches.length === 2 && pinch) {
+    const [a, b] = [e.touches[0], e.touches[1]];
+    const cx = (a.clientX + b.clientX) / 2;
+    const cy = (a.clientY + b.clientY) / 2;
+    const d = Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+
+    cam.x -= (cx - pinch.cx) / cam.zoom;
+    cam.y -= (cy - pinch.cy) / cam.zoom;
+
+    const factor = d / pinch.dist;
+    const [wx, wy] = screenToWorld(cx, cy);
+    cam.zoom = Math.max(0.04, Math.min(8, cam.zoom * factor));
+    const [nwx, nwy] = screenToWorld(cx, cy);
+    cam.x += wx - nwx; cam.y += wy - nwy;
+
+    pinch.dist = d; pinch.cx = cx; pinch.cy = cy;
+  }
+  e.preventDefault();
+}, { passive: false });
+
+canvas.addEventListener('touchend', e => {
+  lastTouchTime = performance.now();
+  if (thrustTarget && e.touches.length === 0) { thrustTarget = null; thrustScreenPos = null; }
+  if (drag.active && e.touches.length === 0) {
+    endDrag(drag.currentScreen[0], drag.currentScreen[1]);
+  }
+  if (e.touches.length < 2) pinch = null;
+});
+
+// -------- UI bindings --------
+document.querySelectorAll('[data-type]').forEach(b => {
+  b.addEventListener('click', () => {
+    currentType = b.dataset.type;
+    document.querySelectorAll('[data-type]').forEach(x => x.classList.remove('active'));
+    b.classList.add('active');
+  });
+});
+document.querySelectorAll('[data-preset]').forEach(b => {
+  b.addEventListener('click', () => loadPreset(b.dataset.preset));
+});
+
+document.getElementById('add-mode').addEventListener('click', e => {
+  addMode = !addMode;
+  e.currentTarget.classList.toggle('active', addMode);
+  e.currentTarget.textContent = addMode ? 'aim to drop' : 'tap to place';
+  if (!addMode) setArmed(null);
+});
+
+document.getElementById('merge').addEventListener('click', e => {
+  mergeOn = !mergeOn;
+  e.currentTarget.classList.toggle('active', mergeOn);
+  e.currentTarget.textContent = mergeOn ? 'merge on' : 'merge off';
+});
+
+// v18: tidal disruption toggle
+document.getElementById('tidal').addEventListener('click', e => {
+  tidalOn = !tidalOn;
+  e.currentTarget.classList.toggle('active', tidalOn);
+  e.currentTarget.textContent = tidalOn ? 'tidal on' : 'tidal off';
+});
+
+document.getElementById('pause').addEventListener('click', e => {
+  paused = !paused;
+  e.currentTarget.textContent = paused ? 'play' : 'pause';
+  e.currentTarget.classList.toggle('active', paused);
+});
+document.getElementById('slower').addEventListener('click', () => {
+  timeScale = Math.max(0.1, timeScale / 1.5);
+  document.getElementById('speed').textContent = timeScale.toFixed(1) + 'x';
+});
+document.getElementById('faster').addEventListener('click', () => {
+  timeScale = Math.min(10, timeScale * 1.5);
+  document.getElementById('speed').textContent = timeScale.toFixed(1) + 'x';
+});
+document.getElementById('trails').addEventListener('click', e => {
+  trailsOn = !trailsOn;
+  e.currentTarget.classList.toggle('active', trailsOn);
+});
+
+// v27: orbit lines toggle (replaced velocity arrows)
+document.getElementById('orbit-lines').addEventListener('click', e => {
+  showOrbitLines = !showOrbitLines;
+  e.currentTarget.classList.toggle('active', showOrbitLines);
+});
+
+// v17/v20: G slider (logarithmic scale: slider value is log10(G))
+// both panel and mobile sliders control the same G value
+const gSlider = document.getElementById('g-slider');
+const gValue = document.getElementById('g-value');
+const mbGSlider = document.getElementById('mb-g-slider');
+
+function setG(newG) {
+  G = newG;
+  const logVal = Math.log10(G).toFixed(2);
+  if (gSlider) gSlider.value = logVal;
+  if (mbGSlider) mbGSlider.value = logVal;
+  if (gValue) gValue.textContent = G.toFixed(2);
+  const mbGVal = document.getElementById('mb-g-value');
+  if (mbGVal) mbGVal.textContent = G.toFixed(2);
+  storedAx = null; storedAy = null;
+}
+
+function onGSliderInput(e) {
+  setG(Math.pow(10, parseFloat(e.target.value)));
+}
+if (gSlider) gSlider.addEventListener('input', onGSliderInput);
+if (mbGSlider) mbGSlider.addEventListener('input', onGSliderInput);
+
+function resetG() { setG(G_DEFAULT); }
+document.getElementById('g-reset')?.addEventListener('click', resetG);
+document.getElementById('mb-g-reset')?.addEventListener('click', resetG);
+
+
+document.getElementById('follow').addEventListener('click', e => {
+  followBiggest = !followBiggest;
+  e.currentTarget.classList.toggle('active', followBiggest);
+});
+document.getElementById('recenter').addEventListener('click', () => {
+  if (!bodies.length) { cam.x = 0; cam.y = 0; cam.zoom = 1; return; }
+  let mx = 0, my = 0, totalM = 0;
+  for (const b of bodies) { mx += b.x * b.mass; my += b.y * b.mass; totalM += b.mass; }
+  cam.x = mx / totalM; cam.y = my / totalM;
+  let maxDist = 0;
+  for (const b of bodies) {
+    const d = Math.hypot(b.x - cam.x, b.y - cam.y);
+    if (d > maxDist) maxDist = d;
+  }
+  if (maxDist > 0) cam.zoom = Math.min(8, Math.min(W, H) * 0.4 / maxDist);
+});
+
+// v30: zoom-to-fit button (mirrors dbl-click / Z key)
+document.getElementById('zoomfit')?.addEventListener('click', () => zoomToFit());
+
+// v15: clear all transient modes except the named one. centralises the
+// mutex logic that used to be inline in each toggle handler.
+function clearTransientModes(except) {
+  if (except !== 'delete' && deleteMode) {
+    deleteMode = false;
+    document.getElementById('delete-mode').classList.remove('danger-active');
+    document.body.classList.remove('delete-mode');
+  }
+  if (except !== 'pin' && pinMode) {
+    pinMode = false;
+    document.getElementById('pin-mode').classList.remove('pin-active');
+    document.body.classList.remove('pin-mode');
+  }
+  if (except !== 'circ' && circularizeMode) {
+    circularizeMode = false;
+    document.getElementById('circularize-mode').classList.remove('circ-active');
+    document.body.classList.remove('circ-mode');
+  }
+  if (except !== 'thrust' && thrustMode) {
+    thrustMode = false;
+    thrustTarget = null;
+    thrustScreenPos = null;
+    document.getElementById('thrust-mode').classList.remove('thrust-active');
+    document.body.classList.remove('thrust-mode');
+  }
+}
+
+// v10: delete mode toggle (for mobile)
+document.getElementById('delete-mode').addEventListener('click', e => {
+  deleteMode = !deleteMode;
+  if (deleteMode) clearTransientModes('delete');
+  e.currentTarget.classList.toggle('danger-active', deleteMode);
+  document.body.classList.toggle('delete-mode', deleteMode);
+});
+
+// v11: pin mode toggle
+document.getElementById('pin-mode').addEventListener('click', e => {
+  pinMode = !pinMode;
+  if (pinMode) clearTransientModes('pin');
+  e.currentTarget.classList.toggle('pin-active', pinMode);
+  document.body.classList.toggle('pin-mode', pinMode);
+});
+
+// v15: circularize mode toggle
+document.getElementById('circularize-mode').addEventListener('click', e => {
+  circularizeMode = !circularizeMode;
+  if (circularizeMode) clearTransientModes('circ');
+  e.currentTarget.classList.toggle('circ-active', circularizeMode);
+  document.body.classList.toggle('circ-mode', circularizeMode);
+});
+
+// v24: thrust mode toggle
+document.getElementById('thrust-mode').addEventListener('click', e => {
+  thrustMode = !thrustMode;
+  if (thrustMode) clearTransientModes('thrust');
+  e.currentTarget.classList.toggle('thrust-active', thrustMode);
+  document.body.classList.toggle('thrust-mode', thrustMode);
+});
+
+document.getElementById('clear').addEventListener('click', () => { bodies = []; storedAx = null; storedAy = null; ejections = 0; });
+
+document.getElementById('collapse').addEventListener('click', e => {
+  document.body.classList.toggle('collapsed');
+  syncMobileBar();
+});
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'Escape') {
+    setArmed(null);
+    clearTransientModes(null);
+  }
+  // v18: keyboard shortcuts
+  if (e.key === ' ' || e.key === 'Spacebar') {
+    e.preventDefault();
+    document.getElementById('pause').click();
+  }
+  if (e.key === 'd' || e.key === 'D') document.getElementById('delete-mode').click();
+  if (e.key === 'p' || e.key === 'P') document.getElementById('pin-mode').click();
+  if (e.key === 'c' || e.key === 'C') document.getElementById('circularize-mode').click();
+  if (e.key === 'h' || e.key === 'H') document.getElementById('thrust-mode').click();
+  if (e.key === 'v' || e.key === 'V' || e.key === 'o' || e.key === 'O') document.getElementById('orbit-lines').click();
+  if (e.key === 't' || e.key === 'T') document.getElementById('trails').click();
+  if (e.key === 'f' || e.key === 'F') document.getElementById('follow').click();
+  if (e.key === 'r' || e.key === 'R') document.getElementById('recenter').click();
+  if (e.key === 'z' || e.key === 'Z') zoomToFit();  // v25
+  // v22: save/load shortcuts
+  if (e.key === 's' || e.key === 'S') { e.preventDefault(); document.getElementById('save-state').click(); }
+  if (e.key === 'l' || e.key === 'L') document.getElementById('load-state').click();
+});
+
+// v25: zoom to fit - frame every body with padding
+function zoomToFit() {
+  if (!bodies.length) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  for (const b of bodies) {
+    minX = Math.min(minX, b.x); maxX = Math.max(maxX, b.x);
+    minY = Math.min(minY, b.y); maxY = Math.max(maxY, b.y);
+  }
+  cam.x = (minX + maxX) / 2;
+  cam.y = (minY + maxY) / 2;
+  const spanX = Math.max(200, maxX - minX), spanY = Math.max(200, maxY - minY);
+  cam.zoom = Math.max(0.06, Math.min(3, 0.85 * Math.min(W / spanX, H / spanY)));
+  followBiggest = false;
+  document.getElementById('follow')?.classList.remove('active');
+}
+// v38: dblclick-to-zoomToFit removed - it fired during normal rapid clicking
+// (e.g. quick taps on the dock or canvas) and disrupted other click actions.
+// zoomToFit is still reachable via the 'z' key and the zoomfit button.
+
+// -------- v19: mobile toolbar --------
+const TYPE_ORDER = ['asteroid', 'planet', 'star', 'blackhole'];
+const TYPE_COLORS = { asteroid: '#a89a85', planet: '#5fa6ff', star: '#ffd24a', blackhole: '#666' };
+const TYPE_LABELS = { asteroid: 'asteroid', planet: 'planet', star: 'star', blackhole: 'BH' };
+
+function syncMobileBar() {
+  // type indicator
+  const dot = document.querySelector('#mb-type .type-dot');
+  const name = document.querySelector('#mb-type .type-name');
+  if (dot) { dot.style.background = TYPE_COLORS[currentType]; }
+  if (name) { name.textContent = TYPE_LABELS[currentType]; }
+
+  // pause
+  const mbPause = document.getElementById('mb-pause');
+  if (mbPause) {
+    mbPause.textContent = paused ? '▶' : '⏸';
+    mbPause.classList.toggle('active', paused);
+  }
+
+  // mode track + live intent hue
+  const mbPin = document.getElementById('mb-pin');
+  const mbCirc = document.getElementById('mb-circ');
+  const mbDel = document.getElementById('mb-delete');
+  const mbThrust = document.getElementById('mb-thrust');
+  const mbPlace = document.getElementById('mb-place');
+  // hue classes drive each segment's color when active
+  if (mbPin) { mbPin.classList.toggle('pin-active', pinMode); }
+  if (mbCirc) { mbCirc.classList.toggle('circ-active', circularizeMode); }
+  if (mbDel) { mbDel.classList.toggle('danger-active', deleteMode); }
+  if (mbThrust) { mbThrust.classList.toggle('thrust-active', thrustMode); }
+
+  // "place" is the absence of any transient mode; it drives the default hue
+  let m = 'place';
+  if (pinMode) m = 'pin';
+  else if (circularizeMode) m = 'circ';
+  else if (thrustMode) m = 'thrust';
+  else if (deleteMode) m = 'del';
+
+  // generic .active on the current segment drives the expand + label reveal
+  const segs = { place: mbPlace, pin: mbPin, circ: mbCirc, thrust: mbThrust, del: mbDel };
+  for (const k in segs) { if (segs[k]) segs[k].classList.toggle('active', k === m); }
+  document.body.setAttribute('data-mode', m);
+
+  // console (menu) button reflects open state
+  const mbExp = document.getElementById('mb-expand');
+  const isOpen = !document.body.classList.contains('collapsed');
+  if (mbExp) { mbExp.classList.toggle('open', isOpen); }
+}
+
+// type cycle
+document.getElementById('mb-type')?.addEventListener('click', () => {
+  const idx = TYPE_ORDER.indexOf(currentType);
+  const next = TYPE_ORDER[(idx + 1) % TYPE_ORDER.length];
+  currentType = next;
+  document.querySelectorAll('[data-type]').forEach(b => b.classList.toggle('active', b.dataset.type === next));
+  syncMobileBar();
+  haptic(5);
+});
+
+// pause
+document.getElementById('mb-pause')?.addEventListener('click', () => {
+  document.getElementById('pause').click();
+  syncMobileBar();
+});
+
+// mode buttons - delegate to panel buttons so all state stays in sync
+// v30: "place" clears every transient mode (back to default tap-to-place)
+document.getElementById('mb-place')?.addEventListener('click', () => {
+  clearTransientModes('none');
+  syncMobileBar();
+  haptic(5);
+});
+document.getElementById('mb-pin')?.addEventListener('click', () => {
+  document.getElementById('pin-mode').click();
+  syncMobileBar();
+});
+document.getElementById('mb-circ')?.addEventListener('click', () => {
+  document.getElementById('circularize-mode').click();
+  syncMobileBar();
+});
+document.getElementById('mb-delete')?.addEventListener('click', () => {
+  document.getElementById('delete-mode').click();
+  syncMobileBar();
+});
+document.getElementById('mb-thrust')?.addEventListener('click', () => {
+  document.getElementById('thrust-mode').click();
+  syncMobileBar();
+});
+
+// expand/collapse drawer
+document.getElementById('mb-expand')?.addEventListener('click', () => {
+  document.body.classList.toggle('collapsed');
+  syncMobileBar();
+  haptic(5);
+});
+
+// v30: tap the scrim to close the console
+document.getElementById('scrim')?.addEventListener('click', () => {
+  document.body.classList.add('collapsed');
+  syncMobileBar();
+});
+
+// v30: light haptic when the dock mode changes
+['mb-pin','mb-circ','mb-thrust','mb-delete'].forEach(id => {
+  document.getElementById(id)?.addEventListener('click', () => haptic(8));
+});
+
+// sync on mode changes from panel buttons too
+// (panel buttons already call clearTransientModes which updates classes - just sync bar after)
+const panelBtns = ['delete-mode', 'pin-mode', 'circularize-mode', 'thrust-mode', 'pause'];
+panelBtns.forEach(id => {
+  const el = document.getElementById(id);
+  if (el) el.addEventListener('click', () => requestAnimationFrame(syncMobileBar));
+});
+
+// sync on type change from panel
+document.querySelectorAll('[data-type]').forEach(b => {
+  b.addEventListener('click', () => requestAnimationFrame(syncMobileBar));
+});
+
+// initial sync
+syncMobileBar();
+
+// v22: body info tooltip
+const tooltip = document.getElementById('body-tooltip');
+function updateTooltip() {
+  // only show on desktop, when not in a modal mode, not dragging
+  if (!hoverPos || drag.active || deleteMode || pinMode || circularizeMode || armedScenario) {
+    tooltip.classList.remove('visible');
+    return;
+  }
+  const target = findNearestBodyScreen(hoverPos[0], hoverPos[1], 30);
+  if (!target) {
+    tooltip.classList.remove('visible');
+    return;
+  }
+  const speed = Math.sqrt(target.vx * target.vx + target.vy * target.vy);
+  const typeLabel = target.type === 'blackhole' ? 'black hole' : target.type;
+
+  tooltip.querySelector('.tt-color').style.background = target.color === '#000' ? '#666' : target.color;
+  tooltip.querySelector('.tt-type').textContent = typeLabel;
+  tooltip.querySelector('.tt-pin').textContent = target.fixed ? '📌' : '';
+  tooltip.querySelector('.tt-mass').innerHTML = 'mass <span class="tt-val">' + target.mass.toFixed(1) + '</span>';
+  tooltip.querySelector('.tt-speed').innerHTML = 'speed <span class="tt-val">' + speed.toFixed(2) + '</span>';
+
+  // show parent info if there is one
+  const parent = findGravParent(target);
+  if (parent && !target.fixed) {
+    // v25: live osculating elements instead of just radius
+    const el = orbitalElements(target.x, target.y, target.vx, target.vy, target.mass, parent);
+    if (el && el.bound) {
+      tooltip.querySelector('.tt-orbit').innerHTML =
+        'a <span class="tt-val">' + el.a.toFixed(0) + '</span> ' +
+        'e <span class="tt-val">' + el.e.toFixed(2) + '</span> ' +
+        'T <span class="tt-val">' + el.T.toFixed(0) + '</span>';
+    } else {
+      tooltip.querySelector('.tt-orbit').innerHTML = '<span class="tt-val">escape trajectory</span>';
+    }
+  } else {
+    tooltip.querySelector('.tt-orbit').textContent = '';
+  }
+
+  // position tooltip near cursor, offset so it doesn't occlude the body
+  const tx = hoverPos[0] + 16;
+  const ty = hoverPos[1] - 10;
+  tooltip.style.left = Math.min(tx, W - 160) + 'px';
+  tooltip.style.top = Math.max(ty, 4) + 'px';
+  tooltip.classList.add('visible');
+}
+
+// v22: save/load state
+function serializeState() {
+  return JSON.stringify({
+    v: 25,
+    G: G,
+    cam: { x: cam.x, y: cam.y, zoom: cam.zoom },
+    timeScale: timeScale,
+    ejections: ejections,
+    bodies: bodies.map(b => ({
+      x: b.x, y: b.y, vx: b.vx, vy: b.vy,
+      mass: b.mass, radius: b.radius,
+      color: b.color, glow: b.glow, ring: b.ring,
+      fixed: b.fixed, type: b.type,
+      name: b.name, saturnRing: b.saturnRing,
+      shatterAge: b.shatterAge
+    }))
+  });
+}
+
+function deserializeState(json) {
+  try {
+    const s = JSON.parse(json);
+    if (!s.bodies || !Array.isArray(s.bodies)) throw new Error('invalid');
+    bodies = s.bodies.map(b => makeBody(b.x, b.y, b.vx, b.vy, b.type, {
+      mass: b.mass, radius: b.radius, color: b.color,
+      glow: b.glow, ring: b.ring, fixed: b.fixed,
+      name: b.name ?? null, saturnRing: b.saturnRing ?? false,
+      shatterAge: b.shatterAge ?? Infinity
+    }));
+    if (s.G != null) setG(s.G);
+    if (s.cam) { cam.x = s.cam.x; cam.y = s.cam.y; cam.zoom = s.cam.zoom; }
+    if (s.timeScale != null) {
+      timeScale = s.timeScale;
+      document.getElementById('speed').textContent = timeScale.toFixed(1) + 'x';
+    }
+    if (s.ejections != null) ejections = s.ejections;
+    storedAx = null; storedAy = null;
+    return true;
+  } catch (e) {
+    return false;
+  }
+}
+
+document.getElementById('save-state').addEventListener('click', () => {
+  try {
+    localStorage.setItem('orbital-sandbox-save', serializeState());
+    haptic(8);
+    // brief flash on the button
+    const btn = document.getElementById('save-state');
+    btn.textContent = 'saved ✓';
+    btn.classList.add('active');
+    setTimeout(() => { btn.textContent = 'save'; btn.classList.remove('active'); }, 1200);
+  } catch (e) {
+    alert('save failed: ' + e.message);
+  }
+});
+
+document.getElementById('load-state').addEventListener('click', () => {
+  const json = localStorage.getItem('orbital-sandbox-save');
+  if (!json) {
+    const btn = document.getElementById('load-state');
+    btn.textContent = 'no save';
+    setTimeout(() => { btn.textContent = 'load'; }, 1200);
+    return;
+  }
+  if (deserializeState(json)) {
+    haptic(8);
+    const btn = document.getElementById('load-state');
+    btn.textContent = 'loaded ✓';
+    btn.classList.add('active');
+    setTimeout(() => { btn.textContent = 'load'; btn.classList.remove('active'); }, 1200);
+  }
+});
+
+// v22: keyboard shortcut for save/load
+// (added to existing keydown handler below)
+
+// -------- main loop --------
+let timeAccum = 0;
+let lastFps = performance.now();
+let fpsFrames = 0, fpsValue = 60;
+
+function loop(now) {
+  if (!paused) {
+    timeAccum += timeScale;
+    let safety = 0;
+    while (timeAccum >= 1 && safety < 12) {
+      physicsStep();
+      timeAccum -= 1;
+      safety++;
+    }
+    if (timeAccum >= 1) timeAccum = 0;
+  }
+
+  if (followBiggest && bodies.length) {
+    let big = bodies[0];
+    for (const b of bodies) if (b.mass > big.mass) big = b;
+    cam.x += (big.x - cam.x) * 0.1;
+    cam.y += (big.y - cam.y) * 0.1;
+  }
+
+  render();
+
+  fpsFrames++;
+  if (now - lastFps > 500) {
+    fpsValue = Math.round(fpsFrames * 1000 / (now - lastFps));
+    lastFps = now; fpsFrames = 0;
+    const sb = document.getElementById('s-bodies');
+    if (sb) {
+      sb.textContent = bodies.length;
+      let totalMass = 0, pinnedCount = 0;
+      for (const b of bodies) { totalMass += b.mass; if (b.fixed) pinnedCount++; }
+      document.getElementById('s-pinned').textContent = pinnedCount;
+      document.getElementById('s-ejected').textContent = ejections;
+      document.getElementById('s-mass').textContent = totalMass.toFixed(0);
+      document.getElementById('s-g').textContent = G.toFixed(2);
+      document.getElementById('s-zoom').textContent = cam.zoom.toFixed(2);
+      document.getElementById('s-fps').textContent = fpsValue;
+    }
+    // v19: mobile mini stats
+    const msb = document.getElementById('ms-bodies');
+    if (msb) {
+      msb.textContent = bodies.length;
+      document.getElementById('ms-g').textContent = G.toFixed(2);
+      document.getElementById('ms-fps').textContent = fpsValue;
+    }
+  }
+
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
