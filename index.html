@@ -488,6 +488,7 @@
     </button>
   </div>
   <button id="mb-pause" class="dock-btn" title="pause / play">⏸</button>
+  <button id="mb-fullscreen" class="dock-btn" title="fullscreen">⛶</button>
   <button id="mb-expand" class="dock-btn" title="console">≡</button>
 </div>
 
@@ -2460,6 +2461,15 @@ const pan = { active: false, lastX: 0, lastY: 0, moved: false };
 let hoverPos = null;
 let lastTouchTime = 0;
 
+// fullscreen on first tap - browsers block requestFullscreen without a user gesture,
+// so this rides the user's first canvas interaction instead of firing on load.
+let triedAutoFullscreen = false;
+function tryAutoFullscreen() {
+  if (triedAutoFullscreen) return;
+  triedAutoFullscreen = true;
+  document.documentElement.requestFullscreen?.().catch(() => {});
+}
+
 function startDrag(x, y) {
   // v19: if mobile drawer is open, close it and suppress this tap
   if (window.innerWidth <= 640 && !document.body.classList.contains('collapsed')) {
@@ -2576,6 +2586,7 @@ function endDrag(x, y) {
 // v10: right-click = delete (disambiguated from pan via pan.moved flag)
 canvas.addEventListener('mousedown', e => {
   if (performance.now() - lastTouchTime < 500) return;
+  tryAutoFullscreen();
   if (e.button === 0) startDrag(e.clientX, e.clientY);
   else if (e.button === 2) {
     pan.active = true;
@@ -2635,6 +2646,7 @@ canvas.addEventListener('wheel', e => {
 let pinch = null;
 canvas.addEventListener('touchstart', e => {
   lastTouchTime = performance.now();
+  tryAutoFullscreen();
   if (e.touches.length === 1) {
     const t = e.touches[0];
     startDrag(t.clientX, t.clientY);
@@ -2945,7 +2957,17 @@ function syncMobileBar() {
   const mbExp = document.getElementById('mb-expand');
   const isOpen = !document.body.classList.contains('collapsed');
   if (mbExp) { mbExp.classList.toggle('open', isOpen); }
+
+  // fullscreen button reflects actual fullscreen state
+  const mbFs = document.getElementById('mb-fullscreen');
+  if (mbFs) { mbFs.classList.toggle('active', !!document.fullscreenElement); }
 }
+
+document.getElementById('mb-fullscreen')?.addEventListener('click', () => {
+  if (document.fullscreenElement) document.exitFullscreen();
+  else document.documentElement.requestFullscreen?.().catch(() => {});
+});
+document.addEventListener('fullscreenchange', syncMobileBar);
 
 // type cycle
 document.getElementById('mb-type')?.addEventListener('click', () => {
