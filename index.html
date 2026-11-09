@@ -494,7 +494,7 @@
   <button id="mb-expand" class="dock-btn" title="console">≡</button>
 </div>
 
-<div id="dust-size"><span>brush</span><input type="range" id="dust-size-slider" min="8" max="240" value="48" aria-label="dust brush diameter"><span id="dust-size-value">48</span></div>
+<div id="dust-size"><span>size</span><input type="range" id="dust-size-slider" min="8" max="240" value="48" aria-label="dust cloud diameter"><span id="dust-size-value">48</span></div>
 
 <!-- scrim behind the console sheet -->
 <div id="scrim"></div>
@@ -698,7 +698,8 @@ const TYPES = {
   asteroid:  { mass: 1,    radius: 2,  color: '#a89a85', glow: 0,  ring: false },
   planet:    { mass: 50,   radius: 6,  color: '#5fa6ff', glow: 6,  ring: false },
   star:      { mass: 2200, radius: 14, color: '#ffd24a', glow: 38, ring: false },
-  blackhole: { mass: 9000, radius: 9,  color: '#000',    glow: 0,  ring: true  }
+  blackhole: { mass: 9000, radius: 9,  color: '#000',    glow: 0,  ring: true  },
+  dust:      { mass: 0,    radius: 2,  color: '#9dff5f', glow: 0,  ring: false } // placed as a grain cloud, never a body
 };
 
 const PLANET_PALETTE = [
@@ -2158,7 +2159,7 @@ function render() {
     const chargedMass = t.mass * mult;
     // use current world position for preview (accounts for camera movement)
     const [wx, wy] = screenToWorld(drag.startScreen[0], drag.startScreen[1]);
-    const nearest = findNearestMassive(wx, wy, chargedMass);
+    const nearest = findOrbitHost(wx, wy, chargedMass);
 
     if (nearest) {
       const [sx, sy] = worldToScreen(wx, wy);
@@ -2353,11 +2354,12 @@ function render() {
   }
 
   // armed-scenario hover crosshair
-  if (currentType === 'dust' && hoverPos && !armedScenario) {
+  const dustRingAt = drag.active ? drag.startScreen : hoverPos; // touch has no hover
+  if (currentType === 'dust' && dustRingAt && !armedScenario) {
     ctx.strokeStyle = 'rgba(157, 255, 95, 0.5)';
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(hoverPos[0], hoverPos[1], dustBrushD / 2, 0, Math.PI * 2);
+    ctx.arc(dustRingAt[0], dustRingAt[1], dustBrushD / 2, 0, Math.PI * 2);
     ctx.stroke();
   }
 
@@ -2616,7 +2618,6 @@ function startDrag(x, y) {
     }
     return; // clicked empty space in thrust mode, do nothing
   }
-  if (currentType === 'dust' && !armedScenario) { dustBrushStart(x, y); return; }
   drag.active = true;
   drag.startScreen = [x, y];
   drag.currentScreen = [x, y];
@@ -2624,15 +2625,35 @@ function startDrag(x, y) {
   drag.chargeStart = performance.now();
 }
 
-function findNearestMassive(wx, wy, minMass) {
-  let best = null, bestD2 = Infinity;
+// v38: what a tap-placed object orbits. strongest pull picks the primary, then any
+// body nearer the group's COM than the tap point joins it - so tapping outside a
+// binary/triple orbits the whole system instead of inheriting one star's swing
+// (old nearest-body rule flung 20-33% of placements out of three/tatooine/solar).
+function findOrbitHost(wx, wy, minMass) {
+  let best = null, bestA = 0;
   for (const b of bodies) {
     if (b.mass <= minMass) continue;
-    const dx = b.x - wx, dy = b.y - wy;
-    const d2 = dx*dx + dy*dy;
-    if (d2 < bestD2) { bestD2 = d2; best = b; }
+    const a = b.mass / ((b.x - wx) ** 2 + (b.y - wy) ** 2 + SOFT * SOFT);
+    if (a > bestA) { bestA = a; best = b; }
   }
-  return best ? { body: best, dist: Math.sqrt(bestD2) } : null;
+  if (!best) return null;
+  const g = [best];
+  let M = best.mass, X = best.x * M, Y = best.y * M, VX = best.vx * M, VY = best.vy * M;
+  for (let grew = true; grew;) {
+    grew = false;
+    const cx = X / M, cy = Y / M, r = Math.hypot(wx - cx, wy - cy);
+    for (const b of bodies) {
+      if (g.includes(b) || b.mass < M * 0.05) continue; // light bodies don't shift the host
+      if (Math.hypot(b.x - cx, b.y - cy) < r * 0.7) {
+        g.push(b); M += b.mass;
+        X += b.x * b.mass; Y += b.y * b.mass; VX += b.vx * b.mass; VY += b.vy * b.mass;
+        grew = true;
+      }
+    }
+  }
+  const host = g.length === 1 ? best
+    : { x: X / M, y: Y / M, vx: VX / M, vy: VY / M, mass: M, radius: 0 };
+  return { body: host, dist: Math.hypot(wx - host.x, wy - host.y) };
 }
 
 function orbitalVelocity(wx, wy, around, placedMass) {
@@ -2647,34 +2668,9 @@ function orbitalVelocity(wx, wy, around, placedMass) {
   return { vx: nx * v, vy: ny * v };
 }
 
-// dust brush: tap drops a cloud, drag paints. diameter is in screen px so the brush
-// feels the same at any zoom. grains start in orbit around the nearest massive body.
-let dustBrush = null;      // last screen pos while painting
+// dust cloud size: diameter in screen px so it feels the same at any zoom
 let dustBrushD = 48;
-const DUST_DENSITY = 0.4;  // grains per screen px^2 of brush coverage
-function paintDust(sx, sy, n) {
-  const [wx, wy] = screenToWorld(sx, sy);
-  let vx = 0, vy = 0;
-  const near = findNearestMassive(wx, wy, 0);
-  if (near) {
-    const o = orbitalVelocity(wx, wy, near.body, 0);
-    vx = near.body.vx + o.vx; vy = near.body.vy + o.vy;
-  }
-  emitDust(wx, wy, vx, vy, dustBrushD / 2 / cam.zoom, Math.min(4000, Math.round(n)), 0.03);
-}
-function dustBrushStart(x, y) {
-  dustBrush = [x, y];
-  hoverPos = [x, y]; // touch has no hover - show the ring under the finger
-  paintDust(x, y, Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY);
-  haptic(5);
-}
-function dustBrushMove(x, y) {
-  if (!dustBrush) return;
-  const L = Math.hypot(x - dustBrush[0], y - dustBrush[1]);
-  if (L < dustBrushD / 4) return; // wait for enough travel to avoid stacking clumps
-  paintDust(x, y, L * dustBrushD * DUST_DENSITY);
-  dustBrush = [x, y];
-}
+const DUST_DENSITY = 0.4;  // grains per screen px^2 of cloud
 
 function endDrag(x, y) {
   if (!drag.active) return;
@@ -2706,7 +2702,7 @@ function endDrag(x, y) {
       vx = plungerVx;
       vy = plungerVy;
     } else {
-      const nearest = findNearestMassive(spawnX, spawnY, chargedMass);
+      const nearest = findOrbitHost(spawnX, spawnY, chargedMass);
       if (nearest) {
         const orb = orbitalVelocity(spawnX, spawnY, nearest.body, chargedMass);
         vx = nearest.body.vx + orb.vx;
@@ -2717,10 +2713,16 @@ function endDrag(x, y) {
       }
     }
 
-    bodies.push(makeBody(spawnX, spawnY, vx, vy, currentType, {
-      mass: chargedMass,
-      radius: chargedRadius
-    }));
+    if (currentType === 'dust') {
+      // a cloud placed like any body; holding to charge packs in more grains
+      emitDust(spawnX, spawnY, vx, vy, dustBrushD / 2 / cam.zoom,
+        Math.min(8000, Math.round(Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY * mult)), 0.03);
+    } else {
+      bodies.push(makeBody(spawnX, spawnY, vx, vy, currentType, {
+        mass: chargedMass,
+        radius: chargedRadius
+      }));
+    }
     haptic();
   }
   drag.chargeStart = 0;
@@ -2749,7 +2751,6 @@ canvas.addEventListener('mousemove', e => {
   hoverPos = [e.clientX, e.clientY];
   if (thrustTarget) thrustScreenPos = [e.clientX, e.clientY];
   if (drag.active) drag.currentScreen = [e.clientX, e.clientY];
-  dustBrushMove(e.clientX, e.clientY);
   if (pan.active) {
     const dx = e.clientX - pan.lastX, dy = e.clientY - pan.lastY;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pan.moved = true;
@@ -2765,7 +2766,6 @@ canvas.addEventListener('mouseleave', () => {
 canvas.addEventListener('mouseup', e => {
   if (performance.now() - lastTouchTime < 500) return;
   if (thrustTarget) { thrustTarget = null; thrustScreenPos = null; }
-  dustBrush = null;
   if (e.button === 0) endDrag(e.clientX, e.clientY);
   if (e.button === 2) {
     // v10: right-click without dragging = delete nearest body
@@ -2796,7 +2796,6 @@ canvas.addEventListener('touchstart', e => {
     const t = e.touches[0];
     startDrag(t.clientX, t.clientY);
   } else if (e.touches.length === 2) {
-    dustBrush = null; // second finger = pinch, stop painting
     drag.active = false;
     drag.chargeStart = 0;
     const [a, b] = [e.touches[0], e.touches[1]];
@@ -2814,8 +2813,6 @@ canvas.addEventListener('touchmove', e => {
     const t = e.touches[0];
     if (thrustTarget) thrustScreenPos = [t.clientX, t.clientY];
     if (drag.active) drag.currentScreen = [t.clientX, t.clientY];
-    dustBrushMove(t.clientX, t.clientY);
-    if (dustBrush) hoverPos = [t.clientX, t.clientY];
   } else if (e.touches.length === 2 && pinch) {
     const [a, b] = [e.touches[0], e.touches[1]];
     const cx = (a.clientX + b.clientX) / 2;
@@ -2843,7 +2840,6 @@ canvas.addEventListener('touchend', e => {
     endDrag(drag.currentScreen[0], drag.currentScreen[1]);
   }
   if (e.touches.length < 2) pinch = null;
-  if (e.touches.length === 0 && dustBrush) { dustBrush = null; hoverPos = null; }
 });
 
 // -------- UI bindings --------
