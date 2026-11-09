@@ -423,3 +423,18 @@ Chaotic by design - **no stability target**, same disclaimer the galaxy scenario
 **The teaching moment.** The scenario's interactive value: arm it and launch a test particle into a gap → watch it get scattered by the resonance. Launch into the stable zone → peaceful orbit. That contrast IS the resonance lesson, even though the gap formation itself is pre-computed.
 
 **`zoomToFit()` on load** - Jupiter at r=550 is off-screen on phone at zoom 1.
+
+## v37 - dust layer (massless tracers, DustSim-inspired)
+
+**What.** Roche shatters and merges now spray dust: up to `DUST_MAX = 30000` grains in typed arrays (`dX/dY/dVX/dVY`), separate from `bodies[]`. Grains feel gravity, exert none, never merge with each other. Cost is O(grains × pullers), not O(n²). Measured headless: 30k grains, stepDust 0.6-0.8ms, drawDust ~4ms per frame (server CPU, not phone).
+
+**Physics.** Symplectic Euler (kick then drift), same `G`, `SOFT`, `STEP_DT`, called at the end of `physicsStep()`. Removed when inside a puller's radius (swallowed) or past `CULL_RADIUS` from body COM. Full buffer overwrites random grains. Pullers = bodies with mass >= `DUST_PULL_MIN` (5) and past shatter cooldown.
+
+**Emission.** Shatter: `800 × cbrt(mass)` grains (cap 4000) at the body, its velocity ± 0.25. Merge: `600 × cbrt(small.mass)` (cap 4000) on big's surface at the impact side, big's velocity + half the impactor's relative velocity ± 0.3 × relSpeed.
+
+**Gotchas paid for.**
+- Merge ejecta spawned at the impact point sits inside big's radius - swallowed the same step, zero visible dust.
+- Fresh shatter fragments (mass ≥5) sit inside the spray; letting them swallow it killed over half the grains on step one. Hence the cooldown exclusion.
+- Shatter cascades (fragments re-shattering) fill the 30k cap in ~15s from one grazing planet.
+
+**Render.** 1-css-px grains written to an ImageData buffer, drawn with `lighter` compositing between trails and bodies. Color = speed relative to smoothed mean grain speed (red slow, green at mean, blue fast) so every scene spans the ramp. Dust clears with `bodies` on preset load, clear and state restore; it is not serialized.
