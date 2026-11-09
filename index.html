@@ -230,6 +230,17 @@
     #mobile-bar { left: 50%; right: auto; transform: translateX(-50%); margin: 0; width: min(560px, 92vw); }
   }
 
+  /* dust brush size - floats above the dock only while dust is the spawn type */
+  #dust-size {
+    display: none; position: fixed; z-index: 16; left: 50%; transform: translateX(-50%);
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 84px);
+    align-items: center; gap: 10px; padding: 8px 14px;
+    background: var(--deck-2); border: 1px solid var(--edge); border-radius: 999px;
+    color: #cfd6e4; font: 12px ui-monospace, monospace;
+  }
+  body.dust-type #dust-size { display: flex; }
+  #dust-size input { width: 180px; }
+
   /* spawn chip */
   #mb-type {
     flex: 0 0 auto; height: 46px; padding: 0 12px;
@@ -482,6 +493,8 @@
   <button id="mb-pause" class="dock-btn" title="pause / play">⏸</button>
   <button id="mb-expand" class="dock-btn" title="console">≡</button>
 </div>
+
+<div id="dust-size"><span>brush</span><input type="range" id="dust-size-slider" min="8" max="240" value="48" aria-label="dust brush diameter"><span id="dust-size-value">48</span></div>
 
 <!-- scrim behind the console sheet -->
 <div id="scrim"></div>
@@ -2340,6 +2353,14 @@ function render() {
   }
 
   // armed-scenario hover crosshair
+  if (currentType === 'dust' && hoverPos && !armedScenario) {
+    ctx.strokeStyle = 'rgba(157, 255, 95, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(hoverPos[0], hoverPos[1], dustBrushD / 2, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   if (armedScenario && !drag.active && hoverPos) {
     ctx.strokeStyle = 'rgba(95, 223, 255, 0.7)';
     ctx.lineWidth = 1;
@@ -2595,6 +2616,7 @@ function startDrag(x, y) {
     }
     return; // clicked empty space in thrust mode, do nothing
   }
+  if (currentType === 'dust' && !armedScenario) { dustBrushStart(x, y); return; }
   drag.active = true;
   drag.startScreen = [x, y];
   drag.currentScreen = [x, y];
@@ -2623,6 +2645,35 @@ function orbitalVelocity(wx, wy, around, placedMass) {
   const v = Math.sqrt(G * (around.mass + (placedMass || 0)) / r);
   const nx = -dy / r, ny = dx / r;
   return { vx: nx * v, vy: ny * v };
+}
+
+// dust brush: tap drops a cloud, drag paints. diameter is in screen px so the brush
+// feels the same at any zoom. grains start in orbit around the nearest massive body.
+let dustBrush = null;      // last screen pos while painting
+let dustBrushD = 48;
+const DUST_DENSITY = 0.4;  // grains per screen px^2 of brush coverage
+function paintDust(sx, sy, n) {
+  const [wx, wy] = screenToWorld(sx, sy);
+  let vx = 0, vy = 0;
+  const near = findNearestMassive(wx, wy, 0);
+  if (near) {
+    const o = orbitalVelocity(wx, wy, near.body, 0);
+    vx = near.body.vx + o.vx; vy = near.body.vy + o.vy;
+  }
+  emitDust(wx, wy, vx, vy, dustBrushD / 2 / cam.zoom, Math.min(4000, Math.round(n)), 0.03);
+}
+function dustBrushStart(x, y) {
+  dustBrush = [x, y];
+  hoverPos = [x, y]; // touch has no hover - show the ring under the finger
+  paintDust(x, y, Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY);
+  haptic(5);
+}
+function dustBrushMove(x, y) {
+  if (!dustBrush) return;
+  const L = Math.hypot(x - dustBrush[0], y - dustBrush[1]);
+  if (L < dustBrushD / 4) return; // wait for enough travel to avoid stacking clumps
+  paintDust(x, y, L * dustBrushD * DUST_DENSITY);
+  dustBrush = [x, y];
 }
 
 function endDrag(x, y) {
@@ -2698,6 +2749,7 @@ canvas.addEventListener('mousemove', e => {
   hoverPos = [e.clientX, e.clientY];
   if (thrustTarget) thrustScreenPos = [e.clientX, e.clientY];
   if (drag.active) drag.currentScreen = [e.clientX, e.clientY];
+  dustBrushMove(e.clientX, e.clientY);
   if (pan.active) {
     const dx = e.clientX - pan.lastX, dy = e.clientY - pan.lastY;
     if (Math.abs(dx) > 2 || Math.abs(dy) > 2) pan.moved = true;
@@ -2713,6 +2765,7 @@ canvas.addEventListener('mouseleave', () => {
 canvas.addEventListener('mouseup', e => {
   if (performance.now() - lastTouchTime < 500) return;
   if (thrustTarget) { thrustTarget = null; thrustScreenPos = null; }
+  dustBrush = null;
   if (e.button === 0) endDrag(e.clientX, e.clientY);
   if (e.button === 2) {
     // v10: right-click without dragging = delete nearest body
@@ -2743,6 +2796,7 @@ canvas.addEventListener('touchstart', e => {
     const t = e.touches[0];
     startDrag(t.clientX, t.clientY);
   } else if (e.touches.length === 2) {
+    dustBrush = null; // second finger = pinch, stop painting
     drag.active = false;
     drag.chargeStart = 0;
     const [a, b] = [e.touches[0], e.touches[1]];
@@ -2760,6 +2814,8 @@ canvas.addEventListener('touchmove', e => {
     const t = e.touches[0];
     if (thrustTarget) thrustScreenPos = [t.clientX, t.clientY];
     if (drag.active) drag.currentScreen = [t.clientX, t.clientY];
+    dustBrushMove(t.clientX, t.clientY);
+    if (dustBrush) hoverPos = [t.clientX, t.clientY];
   } else if (e.touches.length === 2 && pinch) {
     const [a, b] = [e.touches[0], e.touches[1]];
     const cx = (a.clientX + b.clientX) / 2;
@@ -2787,6 +2843,7 @@ canvas.addEventListener('touchend', e => {
     endDrag(drag.currentScreen[0], drag.currentScreen[1]);
   }
   if (e.touches.length < 2) pinch = null;
+  if (e.touches.length === 0 && dustBrush) { dustBrush = null; hoverPos = null; }
 });
 
 // -------- UI bindings --------
@@ -2795,6 +2852,7 @@ document.querySelectorAll('[data-type]').forEach(b => {
     currentType = b.dataset.type;
     document.querySelectorAll('[data-type]').forEach(x => x.classList.remove('active'));
     b.classList.add('active');
+    syncMobileBar();
   });
 });
 document.querySelectorAll('[data-preset]').forEach(b => {
@@ -2998,9 +3056,9 @@ function zoomToFit() {
 // zoomToFit is still reachable via the 'z' key and the zoomfit button.
 
 // -------- v19: mobile toolbar --------
-const TYPE_ORDER = ['asteroid', 'planet', 'star', 'blackhole'];
-const TYPE_COLORS = { asteroid: '#a89a85', planet: '#5fa6ff', star: '#ffd24a', blackhole: '#666' };
-const TYPE_LABELS = { asteroid: 'asteroid', planet: 'planet', star: 'star', blackhole: 'BH' };
+const TYPE_ORDER = ['asteroid', 'planet', 'star', 'blackhole', 'dust'];
+const TYPE_COLORS = { asteroid: '#a89a85', planet: '#5fa6ff', star: '#ffd24a', blackhole: '#666', dust: '#9dff5f' };
+const TYPE_LABELS = { asteroid: 'asteroid', planet: 'planet', star: 'star', blackhole: 'BH', dust: 'dust' };
 
 function syncMobileBar() {
   // type indicator
@@ -3008,6 +3066,7 @@ function syncMobileBar() {
   const name = document.querySelector('#mb-type .type-name');
   if (dot) { dot.style.background = TYPE_COLORS[currentType]; }
   if (name) { name.textContent = TYPE_LABELS[currentType]; }
+  document.body.classList.toggle('dust-type', currentType === 'dust');
 
   // pause
   const mbPause = document.getElementById('mb-pause');
@@ -3064,6 +3123,11 @@ document.getElementById('mb-type')?.addEventListener('click', () => {
   document.querySelectorAll('[data-type]').forEach(b => b.classList.toggle('active', b.dataset.type === next));
   syncMobileBar();
   haptic(5);
+});
+
+document.getElementById('dust-size-slider').addEventListener('input', e => {
+  dustBrushD = +e.target.value;
+  document.getElementById('dust-size-value').textContent = dustBrushD;
 });
 
 // pause

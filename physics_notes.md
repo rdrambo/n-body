@@ -438,3 +438,5 @@ Chaotic by design - **no stability target**, same disclaimer the galaxy scenario
 - Shatter cascades (fragments re-shattering) fill the 30k cap in ~15s from one grazing planet.
 
 **Render.** 1-css-px grains written to an ImageData buffer, drawn with `lighter` compositing between trails and bodies. Color = speed relative to smoothed mean grain speed (red slow, green at mean, blue fast) so every scene spans the ramp. Dust clears with `bodies` on preset load, clear and state restore; it is not serialized.
+
+**Dust brush (v38).** `dust` is a 5th spawn type on the chip. Tap drops a cloud, drag paints; diameter (8-240 screen px, default 48) via a slider that shows only while dust is selected. Density 0.4 grains per screen px² of coverage. Painted grains get `orbitalVelocity()` around the nearest body (inheriting its velocity) ± 0.03, so strokes shear into rings. Verified: a 30px arc stroke around a lone star (5257 grains) lost 0 grains after 6s.
