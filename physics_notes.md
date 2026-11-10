@@ -503,3 +503,27 @@ Measured (60s, gravity mode unless noted):
 | 240px tap, no star (45s) | 1 born, 414 | 1 born, 359 |
 
 Gotcha: a longer delay hands the win to tides - big clouds tapped right beside a star now shred before they can collapse. Physically fair, but that's the cost of a calmer start.
+
+## v41 - dust that orbits, weightless spray, dust prefabs
+
+**Tapped dust: one orbit per grain.** A tapped cloud used to get one shared velocity (the orbital velocity of its centre). Away from the centre that is the wrong speed and direction, so the cloud smeared into crossing eccentric streams: tails flung outward near a star, and dust too hot to pass the cold test. v40's 10s maturity gave it time to smear, which killed coalescence in real use (v40 was only tested on a synthetic cold disk - lesson: test on the tap flow, sim running between taps). `emitDust(..., host)` now gives each grain the softened circular velocity about the host. Slingshot (drag) dust still gets one shared velocity - that's the throw.
+
+Also: `findOrbitHost` takes `soft2`; dust passes its cloud radius^2 so a dust-born pebble under the tap can't hijack a cloud far wider than the pebble's Hill sphere.
+
+| measure | before | after |
+|---|---|---|
+| median eccentricity, 240px tap 150u from star | 0.54 | 0.01 |
+| p90 eccentricity, 48px tap, 40 pebbles around | 0.72 | 0.02 |
+| bodies in 60s after filling pool by 48px taps (sim running, gravity mode) | 6-7 | 15-65 |
+
+Body taps were never affected (planet/asteroid taps: e = 0 at 30/60/200u).
+
+**Collision spray is weightless.** Merge and shatter spray grains counted as GRAIN_M each, so every merge minted mass: a 2-pebble merge emitted 600 grains = 6 mass from nothing. A 199-mass disk reached 1296 in 2 minutes; the v39/v40 tables ("204-mass planet", "shatter: 7 born") were inflated by this, and it is what ACCRETE_MAX was papering over. Spray now gets `dBorn = SPRAY` (2^30, "born in the future"): never binned, so it can't collapse, pull or be pulled by dust, and it doesn't accrete. Looks identical. Consequence: shatter debris no longer re-forms bodies - only placed/prefab dust has mass. Disk budget over 4 min: 2400 -> 2392, 0 gained.
+
+**Prefabs** (validated in the real engine via their buttons, Roche live, 5 runs each, gravity mode):
+- `dust` "dust disk" - star + 20k grains, r <= 260. Replaces the v26 disk of 200 asteroids (it was a stand-in for exactly this). First pebbles 10.0-10.2s; ~35 bodies at 30s; biggest 60-106 at 2 min. Snap mode: nothing forms (too thin without dust-on-dust pull).
+- `dustcloud` "dust cloud" - star + one 6k-grain cloud (r 70) at 220u. Shears into an arc; 17-22 pebbles at 30s merging to 9-13 by 4 min, biggest 10-31. Mass 60.0 throughout.
+
+Gotchas:
+- A starless spinning cloud does not hold together: dust-on-dust pull only reaches +-2 grid cells (~50u), so a 150u cloud can't bind itself and flies apart. Dust needs a body to orbit.
+- Late in the dust disk, body count can jump to 100+: grown planets Roche-shatter passing pebbles. Expected.

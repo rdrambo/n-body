@@ -546,7 +546,11 @@
     </button>
     <button class="exp" data-preset="dust">
       <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="3" fill="currentColor" stroke="none"/><circle cx="6" cy="11" r="1" fill="currentColor" stroke="none"/><circle cx="24" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="9" cy="22" r="1" fill="currentColor" stroke="none"/><circle cx="22" cy="21" r="1" fill="currentColor" stroke="none"/><circle cx="20" cy="5" r="1" fill="currentColor" stroke="none"/><circle cx="5" cy="18" r="1" fill="currentColor" stroke="none"/><circle cx="26" cy="19" r="1" fill="currentColor" stroke="none"/></svg></span>
-      <span class="exp-name">dust cloud</span><span class="exp-sub">a disk, accreting</span>
+      <span class="exp-name">dust disk</span><span class="exp-sub">dust builds planets</span>
+    </button>
+    <button class="exp" data-preset="dustcloud">
+      <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="3" fill="currentColor" stroke="none"/><circle cx="15" cy="15" r="10" opacity="0.35"/><circle cx="25" cy="15" r="1" fill="currentColor" stroke="none"/><circle cx="23.5" cy="12" r="1" fill="currentColor" stroke="none"/><circle cx="26" cy="12.5" r="1" fill="currentColor" stroke="none"/><circle cx="24" cy="17.5" r="1" fill="currentColor" stroke="none"/><circle cx="26.5" cy="16.5" r="1" fill="currentColor" stroke="none"/></svg></span>
+      <span class="exp-name">dust cloud</span><span class="exp-sub">one cloud, in orbit</span>
     </button>
     <button class="exp" data-preset="lagrange">
       <span class="sig"><svg viewBox="0 0 30 30" fill="none" stroke="currentColor"><circle cx="15" cy="15" r="11" opacity="0.5"/><path d="M9 15 l3 -3 l3 3 l-3 3Z" fill="currentColor" stroke="none"/><path d="M21 15 l3 -3 l3 3 l-3 3Z" fill="currentColor" stroke="none" transform="translate(-6,0)"/></svg></span>
@@ -782,16 +786,25 @@ const DUST_PULL_MIN = 1; // shortcut: only bodies >= this mass pull dust (belt a
 const dX = new Float32Array(DUST_MAX), dY = new Float32Array(DUST_MAX);
 const dVX = new Float32Array(DUST_MAX), dVY = new Float32Array(DUST_MAX);
 const dBorn = new Int32Array(DUST_MAX); // dust step a grain was emitted - young dust can't collapse
+const SPRAY = 2 ** 30;                  // dBorn of weightless spray: born 'in the future', so never mature
 let dustN = 0, dustStep = 0;
 
-function emitDust(x, y, vx, vy, r, count, spread) {
+// host: body the cloud orbits. each grain then gets its own circular orbit (softened, as stepDust pulls) -
+// one shared velocity smears a cloud into hot crossing streams that fling off and never coalesce (v41)
+// spray: collision debris - looks the same but weightless, or every merge mints free mass (disk went 199 -> 1296 in 2min)
+function emitDust(x, y, vx, vy, r, count, spread, host, spray) {
   for (let k = 0; k < count; k++) {
     const i = dustN < DUST_MAX ? dustN++ : (Math.random() * DUST_MAX) | 0; // full: overwrite a random grain
     const a = Math.random() * Math.PI * 2, d = r * Math.sqrt(Math.random());
     const va = Math.random() * Math.PI * 2, vs = spread * Math.sqrt(Math.random());
     dX[i] = x + Math.cos(a) * d; dY[i] = y + Math.sin(a) * d;
+    if (host) {
+      const hx = dX[i] - host.x, hy = dY[i] - host.y, h2 = hx * hx + hy * hy + SOFT * SOFT;
+      const w = Math.sqrt(G * host.mass / (h2 * Math.sqrt(h2))); // angular speed
+      vx = host.vx - hy * w; vy = host.vy + hx * w;
+    }
     dVX[i] = vx + Math.cos(va) * vs; dVY[i] = vy + Math.sin(va) * vs;
-    dBorn[i] = dustStep;
+    dBorn[i] = spray ? SPRAY : dustStep;
   }
 }
 
@@ -813,7 +826,7 @@ function stepDust(dt) {
       const b = P[j], dx = b.x - x, dy = b.y - y, d2 = dx * dx + dy * dy;
       if (d2 < b.radius * b.radius) { // swallowed
         dead = true;
-        if (accrete && b.mass < ACCRETE_MAX) { // grain's mass + momentum join the body, so planetesimals grow by sweeping their lane
+        if (accrete && b.mass < ACCRETE_MAX && dBorn[i] <= dustStep) { // grain's mass + momentum join the body, so planetesimals grow by sweeping their lane
           const nm = b.mass + GRAIN_M;
           if (!b.fixed) { b.vx = (b.vx * b.mass + dVX[i] * GRAIN_M) / nm; b.vy = (b.vy * b.mass + dVY[i] * GRAIN_M) / nm; }
           b.radius *= Math.cbrt(nm / b.mass); b.mass = nm;
@@ -882,7 +895,7 @@ function binDust(matureOnly) {
   gOy = (gH < GMAX ? y0 : my / dustN - GMAX * GCELL / 2) - Math.random() * GCELL;
   for (let i = 0; i < dustN; i++) {
     const cx = Math.floor((dX[i] - gOx) / GCELL), cy = Math.floor((dY[i] - gOy) / GCELL);
-    if (cx < 0 || cy < 0 || cx >= gW || cy >= gH || (matureOnly && dustStep - dBorn[i] < DUST_MATURE)) { dCell[i] = -1; continue; }
+    if (cx < 0 || cy < 0 || cx >= gW || cy >= gH || dBorn[i] > dustStep || (matureOnly && dustStep - dBorn[i] < DUST_MATURE)) { dCell[i] = -1; continue; }
     const c = cy * gW + cx, vx = dVX[i], vy = dVY[i];
     dCell[i] = c;
     if (!gN[c]) gOcc[gOccN++] = c;
@@ -1114,33 +1127,14 @@ function spawnPreset(name, ox, oy, vox = 0, voy = 0) {
       ));
       placed++;
     }
-  } else if (name === 'dust') {
-    // v26 rebuild: the old disk was circular orbits + 0.015 jitter -
-    // relative speeds never reached the 0.8 merge gate, so "accretion"
-    // never happened and it was just a dimmer ringed giant. now it's a
-    // hot disk: heavier core (v scales with sqrt(M)) + +-17.5% speed
-    // spread + radial kicks = crossing orbits that collide above the
-    // gate. validated: ~35 merges per 90s, steady timeline, grains grow
-    // 3-5x. watch planetesimals form.
-    const core = makeBody(ox, oy, vox, voy, 'star', {
-      mass: 2000, radius: 8, color: '#a08060', glow: 12
-    });
+  } else if (name === 'dust' || name === 'dustcloud') {
+    // v41: real dust grains, replacing the v26 stand-in disk of 200 asteroids.
+    // every grain starts on its own circular orbit; first pebbles at ~10s (DUST_MATURE).
+    // dust: a full disk that builds planets. dustcloud: one cloud, sheared into an arc of pebbles.
+    const core = makeBody(ox, oy, vox, voy, 'star');
     bodies.push(core);
-    const count = 200;
-    for (let i = 0; i < count; i++) {
-      const a = Math.random() * Math.PI * 2;
-      const u = Math.random();
-      const r = 50 + 250 * (1 - (1 - u) * (1 - u));
-      const vc = Math.sqrt(G * core.mass / r);
-      const v = vc * (0.825 + Math.random() * 0.35);     // eccentricity via speed spread
-      const vr = vc * (Math.random() - 0.5) * 0.25;      // radial kick
-      bodies.push(makeBody(
-        ox + Math.cos(a) * r, oy + Math.sin(a) * r,
-        vox - Math.sin(a) * v + Math.cos(a) * vr,
-        voy + Math.cos(a) * v + Math.sin(a) * vr,
-        'asteroid', { mass: 0.05 + Math.random() * 0.3, radius: 1 + Math.random() * 1.2 }
-      ));
-    }
+    if (name === 'dust') emitDust(ox, oy, 0, 0, 260, 20000, 0.02, core);
+    else emitDust(ox + 220, oy, 0, 0, 70, 6000, 0.02, core);
   } else if (name === 'trojans') {
     // v16: sun + planet + L4/L5 trojan asteroid swarms.
     //
@@ -1479,6 +1473,7 @@ function loadPreset(name) {
     // at r=680 around a compact sun-knot), so frame it on load - otherwise it
     // spawns off the edge of a phone screen at zoom 1.
     if (name === 'trisolaris' || name === 'rogue' || name === 'triple' || name === 'kirkwood') zoomToFit();
+    if (name === 'dust' || name === 'dustcloud') cam.zoom = Math.min(1, W / 600); // zoomToFit only sees bodies; fit the 260u disk
   }
 }
 
@@ -1491,7 +1486,8 @@ function setArmed(name) {
   if (name) {
     const labels = {
       three: 'figure-8',
-      dust: 'dust cloud',
+      dust: 'dust disk',
+      dustcloud: 'dust cloud',
       lagrange: 'fixed pair',
       trojans: 'trojan swarm',
       moons: 'moon system',
@@ -1648,7 +1644,7 @@ function physicsStep() {
         const ia = Math.atan2(small.y - big.y, small.x - big.x), ir = big.radius * 1.3;
         emitDust(big.x + Math.cos(ia) * ir, big.y + Math.sin(ia) * ir,
           big.vx + (small.vx - big.vx) * 0.5, big.vy + (small.vy - big.vy) * 0.5,
-          small.radius * 2, Math.min(4000, Math.round(600 * Math.cbrt(small.mass))), relSpeed * 0.3);
+          small.radius * 2, Math.min(4000, Math.round(600 * Math.cbrt(small.mass))), relSpeed * 0.3, null, true);
         haptic(15);
         if (big.type !== 'blackhole') {
           if (big.mass > 7000) {
@@ -1701,7 +1697,7 @@ function physicsStep() {
 
           addShatter(b.x, b.y, b.radius, b.color, tidalAngle);
           emitDust(b.x, b.y, b.vx, b.vy, b.radius * 1.5,
-            Math.min(4000, Math.round(800 * Math.cbrt(b.mass))), 0.25);
+            Math.min(4000, Math.round(800 * Math.cbrt(b.mass))), 0.25, null, true);
           haptic(25); // strong feedback for dramatic event
 
           for (let k = 0; k < nFrags; k++) {
@@ -2749,11 +2745,12 @@ function startDrag(x, y) {
 // body nearer the group's COM than the tap point joins it - so tapping outside a
 // binary/triple orbits the whole system instead of inheriting one star's swing
 // (old nearest-body rule flung 20-33% of placements out of three/tatooine/solar).
-function findOrbitHost(wx, wy, minMass) {
+// soft2: a wide dust cloud passes its radius^2, so a pebble under the tap can't hijack the whole cloud
+function findOrbitHost(wx, wy, minMass, soft2 = SOFT * SOFT) {
   let best = null, bestA = 0;
   for (const b of bodies) {
     if (b.mass <= minMass) continue;
-    const a = b.mass / ((b.x - wx) ** 2 + (b.y - wy) ** 2 + SOFT * SOFT);
+    const a = b.mass / ((b.x - wx) ** 2 + (b.y - wy) ** 2 + soft2);
     if (a > bestA) { bestA = a; best = b; }
   }
   if (!best) return null;
@@ -2817,13 +2814,16 @@ function endDrag(x, y) {
     const chargedMass = t.mass * mult;
     const chargedRadius = getChargedRadius(t.radius, mult);
 
-    let vx, vy;
+    const dustR = dustBrushD / 2 / cam.zoom;
+    let vx, vy, host = null;
     if (dragged) {
       vx = plungerVx;
       vy = plungerVy;
     } else {
-      const nearest = findOrbitHost(spawnX, spawnY, chargedMass);
+      const nearest = currentType === 'dust' ? findOrbitHost(spawnX, spawnY, 0, dustR * dustR)
+        : findOrbitHost(spawnX, spawnY, chargedMass);
       if (nearest) {
+        host = nearest.body;
         const orb = orbitalVelocity(spawnX, spawnY, nearest.body, chargedMass);
         vx = nearest.body.vx + orb.vx;
         vy = nearest.body.vy + orb.vy;
@@ -2835,8 +2835,8 @@ function endDrag(x, y) {
 
     if (currentType === 'dust') {
       // a cloud placed like any body; holding to charge packs in more grains
-      emitDust(spawnX, spawnY, vx, vy, dustBrushD / 2 / cam.zoom,
-        Math.min(8000, Math.round(Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY * mult)), 0.03);
+      emitDust(spawnX, spawnY, vx, vy, dustR,
+        Math.min(8000, Math.round(Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY * mult)), 0.03, host);
     } else {
       bodies.push(makeBody(spawnX, spawnY, vx, vy, currentType, {
         mass: chargedMass,
