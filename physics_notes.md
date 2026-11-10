@@ -455,3 +455,32 @@ Chaotic by design - **no stability target**, same disclaimer the galaxy scenario
 | tatooine | 98 → 22 | 50 → 25 |
 
 solar (80-380u): flung 63 → 0. Taps among the stars (80-200u) stay chaotic under both rules. That's real three-body physics, not the bug.
+
+## v39 - dust coalescence (planet building)
+
+Dust still never pulls bodies. It joins them instead. Console toggle `dust: off / snap / gravity` (`dustMode`, default `grav`).
+
+**Grain mass.** `GRAIN_M = 0.01` is notional. It only becomes real when grains join a body. Main tuning knob: 100 grains = mass 1 = `DUST_PULL_MIN`, the smallest body dust can form. `DUST_PULL_MIN` dropped 5 → 1 so planetesimals pull and accrete dust. This makes shatter cascades with many fragments cost more (about 1.3ms/step).
+
+**Collapse test** (every 10 steps, 20u grid, cell mass M, half-size h):
+- tidal: `M ≥ 3 h³ Σ(M_b / d³)`. The clump's Hill radius must beat the cell size. This is the Roche shatter math in reverse.
+- cold: grain speed variance `< G M / h`. The grains must not outrun the clump's escape speed.
+- Pass → the grains become an asteroid (color `#c9b48a`, radius `2·cbrt(M)`) at the cell COM, with mean velocity. The strongest-pull host is COM-corrected by the new body's relative momentum.
+
+**Gravity mode** adds coarse dust-on-dust pull: neighbour cells within ±2 (COM to COM, softening h) plus each grain's pull toward its own cell COM. That's O(grains + cells·25) per step, about 2ms/step at 20k grains.
+
+**Accretion.** Swallowed grains add mass and momentum to the swallowing body (radius scales with cbrt of mass), but only if it's under `ACCRETE_MAX = 200`.
+
+**Gotchas paid for.**
+- Without a maturity gate, a tapped cloud is a dense, cold clump and turned to rock on the very first check (step 10). `DUST_MATURE = 300` steps: only grains that old count toward collapse. Tracked by `dBorn[]` plus `dustStep`, carried through every swap-remove.
+- Unlimited accretion let a star swallow a shatter cascade and grow 2200 → 13400. Hence `ACCRETE_MAX`.
+
+**Measured** (60s = 3600 steps, star 2200):
+
+| setup | snap | gravity |
+|---|---|---|
+| smooth 20k disk r 40-260 | 0 born | 48 born (from step 300), merged up to a 204-mass planet |
+| 12 tapped 48px clouds | 15 born, max 4.3 | 9 born, max 29.7 |
+| grazing planet shatter | 0 born | 7 born (from step 1550) |
+
+Gravity mode collapses the outer disk first: tidal shear falls as 1/d³.

@@ -576,6 +576,7 @@
       <div class="row">
         <button id="merge" class="active">merge on</button>
         <button id="tidal" class="active">tidal on</button>
+        <button id="dustmode" class="active" title="dust coalescence: off / snap (dense calm clumps become bodies) / gravity (dust also pulls dust)">dust: gravity</button>
       </div>
       <div class="slider-row">
         <span class="slider-label">G</span>
@@ -777,10 +778,11 @@ function addShatter(x, y, radius, color, angle) {
 // O(grains x pullers) instead of O(n^2), so tens of thousands are affordable.
 // rendered as 1px grains colored by speed (red slow -> blue fast), DustSim-style.
 const DUST_MAX = 30000;
-const DUST_PULL_MIN = 5; // shortcut: only bodies >= this mass pull dust, asteroids are ignored; lower it if belts need to sculpt dust
+const DUST_PULL_MIN = 1; // shortcut: only bodies >= this mass pull dust (belt asteroids ignored); also the smallest body dust can collapse into
 const dX = new Float32Array(DUST_MAX), dY = new Float32Array(DUST_MAX);
 const dVX = new Float32Array(DUST_MAX), dVY = new Float32Array(DUST_MAX);
-let dustN = 0;
+const dBorn = new Int32Array(DUST_MAX); // dust step a grain was emitted - young dust can't collapse
+let dustN = 0, dustStep = 0;
 
 function emitDust(x, y, vx, vy, r, count, spread) {
   for (let k = 0; k < count; k++) {
@@ -789,6 +791,7 @@ function emitDust(x, y, vx, vy, r, count, spread) {
     const va = Math.random() * Math.PI * 2, vs = spread * Math.sqrt(Math.random());
     dX[i] = x + Math.cos(a) * d; dY[i] = y + Math.sin(a) * d;
     dVX[i] = vx + Math.cos(va) * vs; dVY[i] = vy + Math.sin(va) * vs;
+    dBorn[i] = dustStep;
   }
 }
 
@@ -796,7 +799,10 @@ function stepDust(dt) {
   // fresh shatter fragments sit inside the spray - letting them swallow it kills half the dust
   const P = bodies.filter(b => b.mass >= DUST_PULL_MIN && b.shatterAge >= SHATTER_COOLDOWN);
   const m = P.length;
+  dustStep++;
   if (!dustN) return;
+  const grav = dustMode === 'grav', accrete = dustMode !== 'off', E2 = (GCELL / 2) ** 2;
+  if (grav) dustGridForces();
   let cx = 0, cy = 0, tm = 0;
   for (const b of bodies) { cx += b.x * b.mass; cy += b.y * b.mass; tm += b.mass; }
   if (tm) { cx /= tm; cy /= tm; }
@@ -805,9 +811,22 @@ function stepDust(dt) {
     let x = dX[i], y = dY[i], ax = 0, ay = 0, dead = false;
     for (let j = 0; j < m; j++) {
       const b = P[j], dx = b.x - x, dy = b.y - y, d2 = dx * dx + dy * dy;
-      if (d2 < b.radius * b.radius) { dead = true; break; } // swallowed
+      if (d2 < b.radius * b.radius) { // swallowed
+        dead = true;
+        if (accrete && b.mass < ACCRETE_MAX) { // grain's mass + momentum join the body, so planetesimals grow by sweeping their lane
+          const nm = b.mass + GRAIN_M;
+          if (!b.fixed) { b.vx = (b.vx * b.mass + dVX[i] * GRAIN_M) / nm; b.vy = (b.vy * b.mass + dVY[i] * GRAIN_M) / nm; }
+          b.radius *= Math.cbrt(nm / b.mass); b.mass = nm;
+        }
+        break;
+      }
       const r2 = d2 + S2, f = G * b.mass / (r2 * Math.sqrt(r2));
       ax += f * dx; ay += f * dy;
+    }
+    if (!dead && grav && dCell[i] >= 0) { // dust-on-dust: neighbour cells + pull toward own cell's COM
+      const c = dCell[i], n = gN[c], ox = gSX[c] / n - x, oy = gSY[c] / n - y;
+      const r2 = ox * ox + oy * oy + E2, f = G * (n - 1) * GRAIN_M / (r2 * Math.sqrt(r2));
+      ax += gAX[c] + f * ox; ay += gAY[c] + f * oy;
     }
     if (!dead) {
       // symplectic Euler (kick then drift) - stable enough for tracers
@@ -817,9 +836,108 @@ function stepDust(dt) {
     }
     if (dead) { // swap-remove
       const l = --dustN;
-      dX[i] = dX[l]; dY[i] = dY[l]; dVX[i] = dVX[l]; dVY[i] = dVY[l];
+      dX[i] = dX[l]; dY[i] = dY[l]; dVX[i] = dVX[l]; dVY[i] = dVY[l]; dBorn[i] = dBorn[l];
     } else { dX[i] = x; dY[i] = y; }
   }
+}
+
+// -------- dust coalescence: dense, calm clumps collapse into real bodies --------
+// dust still never pulls bodies. a grid bins grains; a cell becomes a body when it passes
+//   tidal: its Hill radius beats the cell size (self-gravity > host's stretching)
+//   cold:  grain speed spread < the clump's own escape speed
+// 'grav' adds coarse dust-on-dust pull (per grid cell, not per grain) so clumps contract first.
+let dustMode = 'grav';          // 'off' | 'snap' | 'grav'
+const GRAIN_M = 0.01;           // notional grain mass - only real once grains join a body. main tuning knob
+const GCELL = 20;               // grid cell, world units
+const GMAX = 400;               // grid cells per side
+const COLLAPSE_EVERY = 10;      // steps between collapse checks
+const DUST_MATURE = 300;        // steps (~5s) dust must drift before it can collapse - else a placed cloud is rock instantly
+const ACCRETE_MAX = 200;        // only bodies lighter than this grow from dust - stars ate whole shatter cascades (5x mass)
+const GG = GMAX * GMAX;
+const gN = new Int32Array(GG), gOcc = new Int32Array(GG);
+const gSX = new Float64Array(GG), gSY = new Float64Array(GG);
+const gSVX = new Float64Array(GG), gSVY = new Float64Array(GG), gSV2 = new Float64Array(GG);
+const gAX = new Float32Array(GG), gAY = new Float32Array(GG);
+const dCell = new Int32Array(DUST_MAX);
+let gOccN = 0, gOx = 0, gOy = 0, gW = 1, gH = 1, dustTick = 0;
+
+function binDust(matureOnly) {
+  for (let k = 0; k < gOccN; k++) {
+    const c = gOcc[k]; gN[c] = 0; gSX[c] = gSY[c] = gSVX[c] = gSVY[c] = gSV2[c] = 0;
+  }
+  gOccN = 0;
+  if (!dustN) return;
+  let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity, mx = 0, my = 0;
+  for (let i = 0; i < dustN; i++) {
+    const x = dX[i], y = dY[i]; mx += x; my += y;
+    if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
+  }
+  // shortcut: grid caps at GMAX cells a side (8000u); wider spreads centre on the dust mean and outliers skip coalescence
+  gW = Math.min(GMAX, Math.ceil((x1 - x0) / GCELL) + 1);
+  gH = Math.min(GMAX, Math.ceil((y1 - y0) / GCELL) + 1);
+  gOx = gW < GMAX ? x0 : mx / dustN - GMAX * GCELL / 2;
+  gOy = gH < GMAX ? y0 : my / dustN - GMAX * GCELL / 2;
+  for (let i = 0; i < dustN; i++) {
+    const cx = Math.floor((dX[i] - gOx) / GCELL), cy = Math.floor((dY[i] - gOy) / GCELL);
+    if (cx < 0 || cy < 0 || cx >= gW || cy >= gH || (matureOnly && dustStep - dBorn[i] < DUST_MATURE)) { dCell[i] = -1; continue; }
+    const c = cy * gW + cx, vx = dVX[i], vy = dVY[i];
+    dCell[i] = c;
+    if (!gN[c]) gOcc[gOccN++] = c;
+    gN[c]++; gSX[c] += dX[i]; gSY[c] += dY[i]; gSVX[c] += vx; gSVY[c] += vy; gSV2[c] += vx * vx + vy * vy;
+  }
+}
+
+function dustGridForces() {
+  binDust();
+  const E2 = (GCELL / 2) ** 2;
+  for (let k = 0; k < gOccN; k++) {
+    const c = gOcc[k], n = gN[c], cx = gSX[c] / n, cy = gSY[c] / n, i0 = c % gW, j0 = (c / gW) | 0;
+    let ax = 0, ay = 0;
+    for (let j = Math.max(0, j0 - 2); j <= Math.min(gH - 1, j0 + 2); j++) {
+      for (let i = Math.max(0, i0 - 2); i <= Math.min(gW - 1, i0 + 2); i++) {
+        const c2 = j * gW + i, n2 = gN[c2];
+        if (!n2 || c2 === c) continue;
+        const dx = gSX[c2] / n2 - cx, dy = gSY[c2] / n2 - cy, r2 = dx * dx + dy * dy + E2;
+        const f = G * n2 * GRAIN_M / (r2 * Math.sqrt(r2));
+        ax += f * dx; ay += f * dy;
+      }
+    }
+    gAX[c] = ax; gAY[c] = ay;
+  }
+}
+
+function collapseDust() {
+  binDust(true);
+  const P = bodies.filter(b => b.mass >= DUST_PULL_MIN);
+  const h = GCELL / 2, minN = Math.ceil(DUST_PULL_MIN / GRAIN_M);
+  let born = 0;
+  for (let k = 0; k < gOccN; k++) {
+    const c = gOcc[k], n = gN[c];
+    if (n < minN) continue;
+    const M = n * GRAIN_M, cx = gSX[c] / n, cy = gSY[c] / n, vx = gSVX[c] / n, vy = gSVY[c] / n;
+    let tid = 0, host = null, best = 0;
+    for (const b of P) {
+      const d2 = (b.x - cx) ** 2 + (b.y - cy) ** 2, t = b.mass / (d2 * Math.sqrt(d2) + 1);
+      tid += t; if (t > best) { best = t; host = b; }
+    }
+    if (M < 3 * h * h * h * tid) continue;                    // tidal: host shear rips it apart
+    if (gSV2[c] / n - vx * vx - vy * vy > G * M / h) continue; // too hot to hold together
+    gN[c] = -n; // mark collapsed
+    const nb = makeBody(cx, cy, vx, vy, 'asteroid', { mass: M, radius: 2 * Math.cbrt(M), color: '#c9b48a' });
+    bodies.push(nb);
+    // COM-correct the host, or new mass appearing with momentum drifts the system
+    if (host && !host.fixed) { host.vx -= M * (vx - host.vx) / host.mass; host.vy -= M * (vy - host.vy) / host.mass; }
+    addFlash(cx, cy, nb.radius, '#9dff5f');
+    born++;
+  }
+  if (!born) return;
+  for (let i = dustN - 1; i >= 0; i--) {
+    const c = dCell[i];
+    if (c < 0 || gN[c] >= 0) continue;
+    const l = --dustN;
+    dX[i] = dX[l]; dY[i] = dY[l]; dVX[i] = dVX[l]; dVY[i] = dVY[l]; dCell[i] = dCell[l]; dBorn[i] = dBorn[l];
+  }
+  storedAx = null; storedAy = null;
 }
 
 // speed -> color LUT, relative to the dust's mean speed so every scene spans the full ramp.
@@ -1637,6 +1755,7 @@ function physicsStep() {
   if (merged) { storedAx = null; storedAy = null; }
 
   stepDust(dt);
+  if (dustMode !== 'off' && ++dustTick % COLLAPSE_EVERY === 0) collapseDust();
 }
 
 // -------- v10: orbit trajectory prediction --------
@@ -2869,6 +2988,12 @@ document.getElementById('tidal').addEventListener('click', e => {
   tidalOn = !tidalOn;
   e.currentTarget.classList.toggle('active', tidalOn);
   e.currentTarget.textContent = tidalOn ? 'tidal on' : 'tidal off';
+});
+
+document.getElementById('dustmode').addEventListener('click', e => {
+  dustMode = { off: 'snap', snap: 'grav', grav: 'off' }[dustMode];
+  e.currentTarget.classList.toggle('active', dustMode !== 'off');
+  e.currentTarget.textContent = 'dust: ' + (dustMode === 'grav' ? 'gravity' : dustMode);
 });
 
 document.getElementById('pause').addEventListener('click', e => {
