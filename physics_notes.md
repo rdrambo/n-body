@@ -484,3 +484,22 @@ Dust still never pulls bodies. It joins them instead. Console toggle `dust: off 
 | grazing planet shatter | 0 born | 7 born (from step 1550) |
 
 Gravity mode collapses the outer disk first: tidal shear falls as 1/d³.
+
+## v40 - softer dust onset
+
+Startup read as too aggressive: square grid lanes within seconds, and bodies popping in at 5s.
+- Lanes were a grid artifact, not timing: every grain was pulled to the same fixed cell centres each step. Fix: grid origin shifts by a random sub-cell offset on every bin, so cell edges never line up twice.
+- `DUST_RAMP = 600` steps: dust-on-dust pull scales 0→1 with grain age.
+- `DUST_MATURE` 300 → 600 (~10s).
+
+Measured (60s, gravity mode unless noted):
+
+| setup | before | after |
+|---|---|---|
+| 20k disk, first birth | 5s, 55 born | 10s, 27 born, max 286 |
+| 240px tap, 150u from star | 4 born, max 36.5 | 0 born - sheared into a halo first |
+| 240px tap, 300u (45s) | 10 born, max 223 | 6 born, max 25 |
+| 240px tap, 600u (45s) | 27 born | 47 born, max 227 |
+| 240px tap, no star (45s) | 1 born, 414 | 1 born, 359 |
+
+Gotcha: a longer delay hands the win to tides - big clouds tapped right beside a star now shred before they can collapse. Physically fair, but that's the cost of a calmer start.

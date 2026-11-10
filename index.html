@@ -826,7 +826,8 @@ function stepDust(dt) {
     if (!dead && grav && dCell[i] >= 0) { // dust-on-dust: neighbour cells + pull toward own cell's COM
       const c = dCell[i], n = gN[c], ox = gSX[c] / n - x, oy = gSY[c] / n - y;
       const r2 = ox * ox + oy * oy + E2, f = G * (n - 1) * GRAIN_M / (r2 * Math.sqrt(r2));
-      ax += gAX[c] + f * ox; ay += gAY[c] + f * oy;
+      const k = Math.min(1, (dustStep - dBorn[i]) / DUST_RAMP); // fades in with grain age so fresh dust drifts naturally first
+      ax += k * (gAX[c] + f * ox); ay += k * (gAY[c] + f * oy);
     }
     if (!dead) {
       // symplectic Euler (kick then drift) - stable enough for tracers
@@ -851,7 +852,8 @@ const GRAIN_M = 0.01;           // notional grain mass - only real once grains j
 const GCELL = 20;               // grid cell, world units
 const GMAX = 400;               // grid cells per side
 const COLLAPSE_EVERY = 10;      // steps between collapse checks
-const DUST_MATURE = 300;        // steps (~5s) dust must drift before it can collapse - else a placed cloud is rock instantly
+const DUST_MATURE = 600;        // steps (~10s) dust must drift before it can collapse - else a placed cloud is rock instantly
+const DUST_RAMP = 600;          // steps over which dust-on-dust pull fades in - full strength at once reads as instant clumping
 const ACCRETE_MAX = 200;        // only bodies lighter than this grow from dust - stars ate whole shatter cascades (5x mass)
 const GG = GMAX * GMAX;
 const gN = new Int32Array(GG), gOcc = new Int32Array(GG);
@@ -873,10 +875,11 @@ function binDust(matureOnly) {
     if (x < x0) x0 = x; if (x > x1) x1 = x; if (y < y0) y0 = y; if (y > y1) y1 = y;
   }
   // shortcut: grid caps at GMAX cells a side (8000u); wider spreads centre on the dust mean and outliers skip coalescence
-  gW = Math.min(GMAX, Math.ceil((x1 - x0) / GCELL) + 1);
-  gH = Math.min(GMAX, Math.ceil((y1 - y0) / GCELL) + 1);
-  gOx = gW < GMAX ? x0 : mx / dustN - GMAX * GCELL / 2;
-  gOy = gH < GMAX ? y0 : my / dustN - GMAX * GCELL / 2;
+  gW = Math.min(GMAX, Math.ceil((x1 - x0) / GCELL) + 2);
+  gH = Math.min(GMAX, Math.ceil((y1 - y0) / GCELL) + 2);
+  // random sub-cell shift each bin: a fixed grid pulls grains onto the same cell centres every step, which shows as lanes
+  gOx = (gW < GMAX ? x0 : mx / dustN - GMAX * GCELL / 2) - Math.random() * GCELL;
+  gOy = (gH < GMAX ? y0 : my / dustN - GMAX * GCELL / 2) - Math.random() * GCELL;
   for (let i = 0; i < dustN; i++) {
     const cx = Math.floor((dX[i] - gOx) / GCELL), cy = Math.floor((dY[i] - gOy) / GCELL);
     if (cx < 0 || cy < 0 || cx >= gW || cy >= gH || (matureOnly && dustStep - dBorn[i] < DUST_MATURE)) { dCell[i] = -1; continue; }
