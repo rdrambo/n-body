@@ -241,6 +241,11 @@
   body.dust-type #dust-size { display: flex; }
   #dust-size input { width: 180px; }
 
+  body.popped-out::before {
+    content: 'running in the pop-out window'; position: fixed; inset: 0;
+    display: grid; place-items: center; color: #6b7487; font: 13px ui-monospace, monospace;
+  }
+
   /* spawn chip */
   #mb-type {
     flex: 0 0 auto; height: 46px; padding: 0 12px;
@@ -504,6 +509,7 @@
   <div class="sheet-grip"></div>
   <div class="sheet-head">
     <span class="name">console</span>
+    <button id="mb-pip" class="dock-btn" title="pop out - floating always-on-top window" hidden>⧉</button>
     <button id="mb-fullscreen" class="dock-btn" title="fullscreen">⛶</button>
   </div>
   <div id="ui-body">
@@ -671,9 +677,10 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 let W, H, DPR;
 
+let host = window; // the window the canvas lives in - the PiP widget while popped out
 function resize() {
-  DPR = Math.min(window.devicePixelRatio || 1, 2);
-  W = window.innerWidth; H = window.innerHeight;
+  DPR = Math.min(host.devicePixelRatio || 1, 2);
+  W = host.innerWidth; H = host.innerHeight;
   canvas.width = W * DPR; canvas.height = H * DPR;
   canvas.style.width = W + 'px'; canvas.style.height = H + 'px';
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
@@ -3355,9 +3362,32 @@ function loop(now) {
     }
   }
 
-  requestAnimationFrame(loop);
+  host.requestAnimationFrame(loop); // the hidden main tab throttles its own rAF; the PiP window keeps ticking
 }
 requestAnimationFrame(loop);
+
+// pop-out widget: Document Picture-in-Picture (Chrome/Edge desktop) - a small window that
+// stays on top of every app. the canvas itself moves in, so all canvas input still works.
+if ('documentPictureInPicture' in window) {
+  const pipBtn = document.getElementById('mb-pip');
+  pipBtn.hidden = false;
+  pipBtn.addEventListener('click', async () => {
+    if (host !== window) { host.close(); return; }
+    const pw = await documentPictureInPicture.requestWindow({ width: 360, height: 360 });
+    pw.document.head.innerHTML = '<style>body{margin:0;overflow:hidden;background:#04050a}canvas{display:block;touch-action:none;cursor:crosshair}</style>';
+    pw.document.body.append(canvas);
+    host = pw;
+    document.body.classList.add('popped-out');
+    resize(); zoomToFit();
+    pw.addEventListener('resize', resize);
+    pw.addEventListener('pagehide', () => {
+      document.body.prepend(canvas);
+      host = window;
+      document.body.classList.remove('popped-out');
+      resize(); zoomToFit();
+    });
+  });
+}
 </script>
 </body>
 </html>
