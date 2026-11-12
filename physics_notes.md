@@ -439,7 +439,7 @@ Chaotic by design - **no stability target**, same disclaimer the galaxy scenario
 
 **Render.** 1-css-px grains written to an ImageData buffer, drawn with `lighter` compositing between trails and bodies. Color = speed relative to smoothed mean grain speed (red slow, green at mean, blue fast) so every scene spans the ramp. Dust clears with `bodies` on preset load, clear and state restore; it is not serialized.
 
-**Dust placing (v38).** `dust` is a 5th spawn type on the chip (`TYPES.dust`, mass 0, never becomes a body). It places like any body: tap = cloud in orbit, drag = plunger slingshot, hold = charge packs in more grains (`mult`, cap 8000). Diameter 8-240 screen px from a slider shown only while dust is selected. Density 0.4 grains per screen px², spread ± 0.03. A paint-brush version was tried first and dropped: strokes came out as a chain of round blobs, and placing like the other types felt more natural.
+**Dust placing (v38).** `dust` is a 5th spawn type on the chip (`TYPES.dust`, mass 0, never becomes a body). It places like any body: tap = cloud in orbit, drag = plunger slingshot, hold = charge packs in more grains (`mult`, cap 8000). *(v42: dust hold now streams instead - see v42.)* Diameter 8-240 screen px from a slider shown only while dust is selected. Density 0.4 grains per screen px², spread ± 0.03. A paint-brush version was tried first and dropped: strokes came out as a chain of round blobs, and placing like the other types felt more natural.
 
 ## v38 - tap-to-orbit host fix (`findOrbitHost`)
 
@@ -527,3 +527,11 @@ Body taps were never affected (planet/asteroid taps: e = 0 at 30/60/200u).
 Gotchas:
 - A starless spinning cloud does not hold together: dust-on-dust pull only reaches +-2 grid cells (~50u), so a 150u cloud can't bind itself and flies apart. Dust needs a body to orbit.
 - Late in the dust disk, body count can jump to 100+: grown planets Roche-shatter passing pebbles. Expected.
+
+## v42 - dust hold-to-stream
+
+**Gesture.** Dust only. Tap = one cloud (unchanged). Press and move >= `MIN_DRAG` within `STREAM_DELAY = 250` ms = fling (unchanged). Press and stay still 250ms = stream starts, then moving paints. Lift stops it. Dust hold-to-charge is gone: the difference was hard to see, and charge needed hold-still, which stream now owns. `getChargeMultiplier()` returns 1 for dust. Bodies still charge.
+
+**Emission.** `updateDustStream(now)` runs each frame from `loop()`. Rate = `STREAM_CLOUDS = 2` brush-sized clouds per second (48px brush = ~1450 grains/s). Frame dt is clamped to 50ms so a stalled tab can't dump a burst. Each grain lands at a random point on the segment the finger moved this frame, so a fast stroke paints a band instead of the v38 chain of blobs. Grains get per-grain circular orbits about `findOrbitHost(..., r^2)` like a tapped cloud, and they carry real mass (`dBorn = dustStep`, not spray). It keeps streaming while paused. At `DUST_MAX` it overwrites random grains, which drops their mass (existing behavior).
+
+**Validated** (headless Chromium, real touch events, solar running, 448x998): tap 724 grains; fast fling 724 grains with shared velocity, never streamed; hold 1s = 0 grains at 150ms, 1080 at 1s; painted ring around the sun = 5718 grains as a continuous band; +20s running, total mass 4079.60 -> 4079.60 (grains moving into bodies, none minted); planet hold 0.9s still charges (mass 50).

@@ -624,7 +624,7 @@
     <div class="group">
       <div class="label">gestures</div>
       <div class="gestures">
-        <kbd>tap</kbd> place in orbit &nbsp; <kbd>pull back</kbd> slingshot &nbsp; <kbd>hold</kbd> charge mass &nbsp; <kbd>drag</kbd> pan &nbsp; <kbd>scroll / pinch</kbd> zoom<br>
+        <kbd>tap</kbd> place in orbit &nbsp; <kbd>pull back</kbd> slingshot &nbsp; <kbd>hold</kbd> charge mass (dust: stream) &nbsp; <kbd>drag</kbd> pan &nbsp; <kbd>scroll / pinch</kbd> zoom<br>
         the dock track sets what a tap does: <kbd>place</kbd> <kbd>pin</kbd> <kbd>circularize</kbd> <kbd>thrust</kbd> <kbd>delete</kbd> — the deck glows in that color<br>
         keys: <kbd>space</kbd> pause <kbd>d</kbd> delete <kbd>p</kbd> pin <kbd>c</kbd> circ <kbd>h</kbd> thrust <kbd>v</kbd>/<kbd>o</kbd> orbits <kbd>t</kbd> trails <kbd>f</kbd> follow <kbd>r</kbd> recenter <kbd>z</kbd> fit <kbd>s</kbd> save <kbd>l</kbd> load
       </div>
@@ -1921,7 +1921,7 @@ const CHARGE_RATE = 3.5;
 const CHARGE_MAX = 20;
 
 function getChargeMultiplier() {
-  if (!drag.active || !drag.chargeStart) return 1;
+  if (!drag.active || !drag.chargeStart || currentType === 'dust') return 1; // dust: hold streams instead
   const elapsed = (performance.now() - drag.chargeStart) / 1000;
   if (elapsed < CHARGE_DELAY) return 1;
   return Math.min(CHARGE_MAX, 1 + (elapsed - CHARGE_DELAY) * CHARGE_RATE);
@@ -2272,7 +2272,7 @@ function render() {
   ctx.globalAlpha = 1;
 
   // ---- v10: parent preview + orbit trace (body mode, no plunger active) ----
-  const showPreview = drag.active && !armedScenario;
+  const showPreview = drag.active && !armedScenario && !drag.streaming;
   const dragDist = drag.active
     ? Math.hypot(drag.currentScreen[0] - drag.startScreen[0],
                  drag.currentScreen[1] - drag.startScreen[1])
@@ -2375,7 +2375,7 @@ function render() {
   }
 
   // ---- launch indicator (pinball plunger style) ----
-  if (drag.active) {
+  if (drag.active && !drag.streaming) {
     const sx = drag.startScreen[0], sy = drag.startScreen[1];
     const mx = drag.currentScreen[0], my = drag.currentScreen[1];
     const pullDx = mx - sx, pullDy = my - sy;
@@ -2480,7 +2480,7 @@ function render() {
   }
 
   // armed-scenario hover crosshair
-  const dustRingAt = drag.active ? drag.startScreen : hoverPos; // touch has no hover
+  const dustRingAt = drag.active ? (drag.streaming ? drag.currentScreen : drag.startScreen) : hoverPos; // touch has no hover
   if (currentType === 'dust' && dustRingAt && !armedScenario) {
     ctx.strokeStyle = 'rgba(157, 255, 95, 0.5)';
     ctx.lineWidth = 1;
@@ -2740,6 +2740,36 @@ function startDrag(x, y) {
   drag.currentScreen = [x, y];
   drag.startWorld = screenToWorld(x, y);
   drag.chargeStart = performance.now();
+  drag.streaming = false; drag.flung = false; drag.streamFrom = null;
+}
+
+// dust hold-to-stream: hold still STREAM_DELAY and the press becomes a paint stream; move first and it stays a fling
+const STREAM_DELAY = 250;   // ms
+const STREAM_CLOUDS = 2;    // brush-sized clouds of grains per second of streaming
+let streamLast = 0;
+function updateDustStream(now) {
+  const dt = Math.min(50, now - streamLast); // clamp: a stalled tab shouldn't dump a burst
+  streamLast = now;
+  if (!drag.active || currentType !== 'dust' || armedScenario || drag.flung) return;
+  const [sx, sy] = drag.currentScreen;
+  if (!drag.streaming) {
+    if (Math.hypot(sx - drag.startScreen[0], sy - drag.startScreen[1]) >= MIN_DRAG) { drag.flung = true; return; }
+    if (now - drag.chargeStart < STREAM_DELAY) return;
+    drag.streaming = true; drag.streamFrom = [sx, sy];
+    haptic(10);
+  }
+  // spread this frame's grains along the whole finger path, or fast strokes become a chain of blobs (v38)
+  const [fx, fy] = drag.streamFrom;
+  drag.streamFrom = [sx, sy];
+  const r = dustBrushD / 2 / cam.zoom;
+  const n = Math.round(Math.PI * (dustBrushD / 2) ** 2 * DUST_DENSITY * STREAM_CLOUDS * dt / 1000);
+  const [wx, wy] = screenToWorld(sx, sy);
+  const nearest = findOrbitHost(wx, wy, 0, r * r);
+  for (let k = 0; k < n; k++) {
+    const t = Math.random();
+    const [px, py] = screenToWorld(fx + (sx - fx) * t, fy + (sy - fy) * t);
+    emitDust(px, py, 0, 0, r, 1, 0.03, nearest ? nearest.body : null);
+  }
 }
 
 // v38: what a tap-placed object orbits. strongest pull picks the primary, then any
@@ -2793,6 +2823,7 @@ const DUST_DENSITY = 0.4;  // grains per screen px^2 of cloud
 function endDrag(x, y) {
   if (!drag.active) return;
   drag.active = false;
+  if (drag.streaming) { drag.streaming = false; drag.chargeStart = 0; return; } // the stream already placed it
 
   const sdx = x - drag.startScreen[0];
   const sdy = y - drag.startScreen[1];
@@ -3468,6 +3499,7 @@ function loop(now) {
     cam.y += (big.y - cam.y) * 0.1;
   }
 
+  updateDustStream(now);
   render();
 
   fpsFrames++;
