@@ -133,8 +133,9 @@
     box-shadow: 0 0 26px rgba(95,223,255,0.22);
     opacity: 0; pointer-events: none;
     transition: opacity 0.2s ease, transform 0.2s ease;
-    display: flex; align-items: center; gap: 8px;
+    display: flex; align-items: center; gap: 8px; white-space: nowrap;
   }
+  body.armed #mobile-stats { visibility: hidden; } /* status pill takes its spot */
   #status::before {
     content: ''; width: 6px; height: 6px; border-radius: 50%;
     background: var(--cyan); box-shadow: 0 0 8px var(--cyan);
@@ -238,7 +239,7 @@
     background: var(--deck-2); border: 1px solid var(--edge); border-radius: 999px;
     color: #cfd6e4; font: 12px ui-monospace, monospace;
   }
-  body.dust-type #dust-size { display: flex; }
+  body.dust-type.collapsed #dust-size { display: flex; } /* not over the open sheet */
   #dust-size input { width: 180px; }
 
   body.popped-out::before {
@@ -248,8 +249,8 @@
 
   /* spawn chip */
   #mb-type {
-    flex: 0 0 auto; height: 46px; padding: 0 12px;
-    display: flex; align-items: center; gap: 8px;
+    flex: 0 0 auto; height: 46px; padding: 0 8px;
+    display: flex; align-items: center; gap: 6px; /* tight: the mode track needs the width */
     background: transparent; border: 1px solid var(--edge);
     border-radius: var(--r-sm); color: var(--ink);
     font-size: 11px; letter-spacing: 0.04em; text-transform: lowercase;
@@ -267,7 +268,7 @@
     padding: 3px; min-width: 0;
   }
   .seg {
-    flex: 1 1 0; min-width: 0; height: 40px;
+    flex: 1 1 0; min-width: 0; height: 40px; padding: 0; /* default button padding ate the label */
     display: flex; align-items: center; justify-content: center;
     background: transparent; border: 0; border-radius: 6px;
     color: var(--ink-3); transition: all 0.16s ease;
@@ -2970,7 +2971,11 @@ document.querySelectorAll('[data-type]').forEach(b => {
   });
 });
 document.querySelectorAll('[data-preset]').forEach(b => {
-  b.addEventListener('click', () => loadPreset(b.dataset.preset));
+  b.addEventListener('click', () => {
+    loadPreset(b.dataset.preset);
+    document.body.classList.add('collapsed'); // show the result, not the sheet
+    syncMobileBar();
+  });
 });
 
 document.getElementById('add-mode').addEventListener('click', e => {
