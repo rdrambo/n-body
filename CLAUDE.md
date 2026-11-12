@@ -34,13 +34,10 @@ Commit messages should say what changed and why in plain language, e.g. `fix plu
 
 ## git workflow
 
-- Commit on demand only - don't auto-commit after every edit.
-- Never push without being asked explicitly, even after a commit.
-- When asked to commit: stage, write a real commit message (not "wip" or "fix"), fold in the physics_notes.md update per commit discipline above if applicable.
-- Deploy is GitHub Pages watching this repo - a push to the default branch is live in under a minute. No build step; don't add one.
+- Standing permission: once work is ready to test, run the commit, merge to master and push yourself. Dustin tests on the live site from his phone. Don't auto-commit after every edit.
+- Deploy is GitHub Pages watching this repo (not Netlify, whatever `~/code/CLAUDE.md` says) - a push to the default branch is live in under a minute. No build step; don't add one.
 
 ## style
 
 - Terse commit messages and code comments. Sentence case, hyphens not em dashes.
 - Short, reactable increments over large speculative changes - this project moves chunk by chunk.
-- Use the `ponytail` skill for edits - lean drafts over polish means the smallest change that works, not the most thorough one.
